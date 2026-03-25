@@ -212,7 +212,14 @@ export class GitHubService {
     });
 
     if (!response.ok) {
-      throw new Error(`GitHub API error: ${response.status}`);
+      let detail = '';
+      try {
+        const errBody = (await response.json()) as { message?: string };
+        detail = errBody?.message ?? '';
+      } catch {
+        detail = response.statusText;
+      }
+      throw new Error(`GitHub API error: ${response.status} — ${detail}`);
     }
 
     return response;
