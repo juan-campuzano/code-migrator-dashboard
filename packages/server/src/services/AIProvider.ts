@@ -321,6 +321,15 @@ export class ClaudeProvider implements AIProvider {
       throw new Error('AI provider returned empty response');
     }
 
-    return parseAIResponse(textBlock.text);
+    console.log(`[ClaudeProvider] Response length: ${textBlock.text.length} chars`);
+    console.log(`[ClaudeProvider] Response preview: ${textBlock.text.substring(0, 500)}`);
+
+    const result = parseAIResponse(textBlock.text);
+    console.log(`[ClaudeProvider] Parsed: ${result.fileChanges.length} file changes, ${result.errors.length} errors`);
+    if (result.errors.length > 0) {
+      console.log(`[ClaudeProvider] Parse errors:`, result.errors);
+    }
+
+    return result;
   }
 }
