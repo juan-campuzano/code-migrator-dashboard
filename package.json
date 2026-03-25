@@ -1,0 +1,22 @@
+{
+    "name": "repository-metadata-dashboard",
+    "version": "1.0.0",
+    "private": true,
+    "workspaces": [
+        "packages/*"
+    ],
+    "scripts": {
+        "dev": "concurrently -n server,web -c blue,green \"npm run dev:server\" \"npm run dev:web\"",
+        "dev:server": "npm run dev --workspace=@repo/server",
+        "dev:web": "npm run start --workspace=@repo/web",
+        "build": "npm run build --workspace=@repo/server && npm run build --workspace=@repo/web",
+        "build:server": "npm run build --workspace=@repo/server",
+        "build:web": "npm run build --workspace=@repo/web",
+        "test": "npm run test --workspace=@repo/server && npm run test --workspace=@repo/web",
+        "test:server": "npm run test --workspace=@repo/server",
+        "test:web": "npm run test --workspace=@repo/web"
+    },
+    "devDependencies": {
+        "concurrently": "^9.2.1"
+    }
+}

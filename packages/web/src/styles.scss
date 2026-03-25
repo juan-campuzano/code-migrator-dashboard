@@ -1,0 +1,36 @@
+@use './theme' as *;
+@use '@angular/material' as mat;
+
+@include mat.all-component-themes($app-theme);
+
+body {
+  margin: 0;
+  font-family: 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: #f0f2f5;
+  color: rgba(0, 0, 0, 0.87);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+mat-card {
+  background-color: #fff;
+}
+
+/* Fix CDK overlay positioning */
+.cdk-overlay-container {
+  position: fixed;
+  z-index: 1000;
+}
+
+.cdk-overlay-connected-position-bounding-box {
+  position: absolute;
+}
+
+/* Smooth scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: #cfd8dc;
+  border-radius: 3px;
+}
