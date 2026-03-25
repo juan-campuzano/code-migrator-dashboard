@@ -255,7 +255,10 @@ export class MigrationAgent {
 
       // 8. If file changes were produced, create branch, commit, open PR
       if (aiResponse.fileChanges.length > 0) {
-        const description = upgradeTargets.map((t) => t.dependencyName).join('-');
+        const rawDescription = upgradeTargets.map((t) => t.dependencyName).join('-');
+        // Truncate description to keep branch name under GitHub's 522-byte ref limit
+        // "refs/heads/migration-agent/<uuid>-" is ~60 bytes, so cap description at ~200 chars
+        const description = rawDescription.length > 200 ? rawDescription.substring(0, 200) : rawDescription;
         const branchName = GitHubServiceStatic.buildBranchName(job.migrationId, description);
 
         const defaultBranch = await this.githubService.getDefaultBranch({ owner, repo, token });
