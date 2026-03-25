@@ -391,3 +391,159 @@ RETURNING id;
 | `MIGRATION_POLL_INTERVAL_MS` | `5000` | Polling interval in milliseconds |
 | `DASHBOARD_BASE_URL` | — | Base URL for dashboard links in PR descriptions |
 
+
+
+## Correctness Properties
+
+*A property is a characteristic or behavior that should hold true across all valid executions of a system — essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.*
+
+### Property 1: Claim returns oldest queued job and transitions to running
+
+*For any* set of migration jobs in the database with various statuses and creation times, calling `claimNextJob()` should return the job with the earliest `created_at` among those with status `queued`, and that job's status should be `running` after the call. If no queued jobs exist, it should return `null`.
+
+**Validates: Requirements 6.1, 6.2**
+
+### Property 2: UpgradeAll selects dependencies below freshness threshold
+
+*For any* set of dependency freshness scores and any threshold value (0–1), when `upgradeAll` is `true`, the resulting `UpgradeTarget[]` should contain exactly those dependencies whose freshness score is below the threshold, and no others.
+
+**Validates: Requirements 1.3**
+
+### Property 3: Agent instruction precedence
+
+*For any* combination of custom instructions (from `parameters.customInstructions`), a repo-level `.migration-agent.md` file content, and built-in defaults, the system prompt sent to the AI provider should use: custom instructions if provided, else repo-level file content if found, else the built-in defaults. Exactly one source is used, never a mix.
+
+**Validates: Requirements 3.2, 3.3, 3.5**
+
+### Property 4: Branch name follows naming pattern
+
+*For any* migration ID (UUID) and short description string, the created branch name should match the pattern `migration-agent/<migration-id>-<short-description>`, where the short description contains only URL-safe characters (lowercase alphanumeric and hyphens).
+
+**Validates: Requirements 4.1**
+
+### Property 5: PR description contains required information
+
+*For any* set of upgrade targets with version changes and any set of file changes, the generated PR description should contain: each upgraded dependency name, the from-version and to-version for each, all modified file paths, and a dashboard link (when `DASHBOARD_BASE_URL` is configured).
+
+**Validates: Requirements 5.1, 5.2, 5.3**
+
+### Property 6: Fallback PR description on AI failure
+
+*For any* set of upgrade targets, when the AI provider fails to generate a PR description, the fallback template should list each dependency name with its version change (from → to) and all modified file paths.
+
+**Validates: Requirements 5.5**
+
+### Property 7: Job outcome correctly recorded
+
+*For any* migration job, if processing succeeds, the job status should be `completed` with the PR URL stored in `result`. If processing fails for any reason, the job status should be `failed` with a non-empty `error_details`. In both cases, `updated_at` should be updated to a value >= the previous `updated_at`.
+
+**Validates: Requirements 6.1, 6.3, 6.4**
+
+### Property 8: List migrations filtering and ordering
+
+*For any* set of migrations in the database and any combination of `repositoryId` and `status` filters, `listMigrations(filters)` should return only migrations matching all provided filters, and the results should be ordered by `created_at` descending (each item's `createdAt` >= the next item's `createdAt`).
+
+**Validates: Requirements 6.5**
+
+### Property 9: Cancel succeeds only for queued jobs
+
+*For any* migration job, calling `cancelMigration(id)` should return `true` and set status to `failed` with `error_details` = `"Cancelled by user"` if and only if the job's current status is `queued`. For jobs in any other status, it should return `false` and leave the job unchanged.
+
+**Validates: Requirements 6.7, 6.8**
+
+### Property 10: Errors mark job as failed with descriptive details
+
+*For any* error during job processing (AI provider failure, GitHub API rate limit, authentication failure, branch creation failure, PR creation failure, or unexpected error), the migration job should be marked as `failed` with `error_details` containing a non-empty message describing the failure. The agent should continue polling for the next job.
+
+**Validates: Requirements 4.5, 4.6, 8.1, 8.2, 8.3, 8.4**
+
+### Property 11: Environment variable configuration parsing
+
+*For any* valid numeric string values set for `MIGRATION_POLL_INTERVAL_MS` and valid string values for `AI_PROVIDER_TYPE`, `AI_PROVIDER_API_KEY`, and `AI_PROVIDER_ENDPOINT`, the agent config should parse them to the corresponding values. When not set, the defaults (`pollIntervalMs: 5000`, `AI_PROVIDER_TYPE: 'copilot'`) should be used.
+
+**Validates: Requirements 2.6**
+
+## Error Handling
+
+### AI Provider Errors
+
+- If the AI provider throws or times out, the agent catches the error, writes the message to `error_details`, transitions the job to `failed`, and continues polling.
+- If the AI provider returns partial results (some dependencies failed), the per-dependency errors are recorded in the `error_details` field. If any file changes were produced, the agent still creates the branch and PR for the successful changes.
+
+### GitHub API Errors
+
+- **Rate limit (429):** The agent records the error with the retry-after duration in `error_details` and marks the job as `failed`.
+- **Authentication (401/403):** The agent marks the job as `failed` with a message indicating the token is missing or invalid.
+- **Branch conflict:** If the branch already exists, the agent marks the job as `failed` with a descriptive message.
+- **PR creation failure:** The job is marked `failed` but the branch is left in place for manual inspection.
+
+### Token Errors
+
+- If `tokenService.getToken('github')` returns `null`, the agent marks the job as `failed` with "GitHub access token not configured."
+
+### Database Errors
+
+- If `claimNextJob()` throws (e.g., connection lost), the agent logs the error and schedules the next poll tick. It does not crash.
+- If `updateMigrationStatus()` throws after processing, the agent logs the error. The job remains in `running` status for manual resolution.
+
+### Shutdown
+
+- `stop()` sets a flag to prevent new poll ticks, then waits for any in-flight job to complete up to `shutdownTimeoutMs` (default 60s).
+- If the job doesn't complete in time, the agent logs a warning and resolves. The job stays in `running` status for manual resolution on next startup.
+
+### Cancel Race Condition
+
+- The `cancelMigration` SQL uses `WHERE status = 'queued'` as a guard. If the agent claims the job between the user's check and the cancel request, the cancel returns `false` (409 response). No data corruption occurs.
+
+## Testing Strategy
+
+### Property-Based Testing
+
+The project already has `fast-check` (v3.19.0) as a dev dependency and uses `vitest` as the test runner. Each correctness property will be implemented as a single property-based test using `fast-check`.
+
+**Configuration:**
+- Minimum 100 iterations per property test (`numRuns: 100`)
+- Each test tagged with a comment: `Feature: background-migration-agent, Property {N}: {title}`
+
+**Property tests to implement:**
+
+1. **Property 1 — Claim returns oldest queued job**: Generate random arrays of migration records with mixed statuses and creation times. Simulate `claimNextJob` logic in-memory. Verify the returned job is the oldest queued one and its status becomes `running`.
+
+2. **Property 2 — UpgradeAll filtering**: Generate random arrays of dependency freshness scores (score 0–1) and a random threshold. Apply the filtering logic. Verify the result contains exactly those with score < threshold.
+
+3. **Property 3 — Agent instruction precedence**: Generate random combinations of (customInstructions | null, repoFileContent | null, defaults). Apply the precedence logic. Verify exactly one source is used in the correct priority order.
+
+4. **Property 4 — Branch name format**: Generate random UUIDs and description strings. Apply the branch name builder. Verify the output matches the `migration-agent/<id>-<slug>` pattern with only safe characters.
+
+5. **Property 5 — PR description content**: Generate random upgrade targets (with names and versions) and file change lists. Build the PR description. Verify it contains all dependency names, version pairs, file paths, and dashboard link.
+
+6. **Property 6 — Fallback PR description**: Generate random upgrade targets and file changes. Build the fallback template. Verify it lists each dependency with version changes and all file paths.
+
+7. **Property 7 — Job outcome recorded**: Generate random result strings and error messages. Mock successful and failing handlers. Verify the job's final state matches (completed with result, or failed with error_details).
+
+8. **Property 8 — List filtering and ordering**: Generate arrays of migrations with random repositoryIds, statuses, and created_at values. Apply random filter combinations. Verify results match filters and are ordered DESC by created_at.
+
+9. **Property 9 — Cancel only queued**: Generate migrations with random statuses. Attempt cancel. Verify success iff status was `queued`.
+
+10. **Property 10 — Errors mark job failed**: Generate random error types and messages. Process them through the error handling logic. Verify the job is marked `failed` with non-empty error_details.
+
+11. **Property 11 — Env var config parsing**: Generate random numeric strings and provider type strings. Parse them through the config loader. Verify correct values. Test with missing vars to verify defaults.
+
+### Unit Tests
+
+Unit tests complement property tests for specific examples, edge cases, and integration points:
+
+- **MigrationAgent lifecycle**: Start/stop, poll loop timing, graceful shutdown with and without in-flight job.
+- **API routes**: HTTP-level tests for `POST /api/migrations` with validation (404 repo, 422 no ingestion, 422 non-GitHub), `GET /api/migrations` with query params, `POST /api/migrations/:id/cancel` with 200/404/409 responses.
+- **CopilotProvider**: Request formatting (system prompt construction, user prompt), response parsing (extracting file changes from AI output).
+- **GitHubService**: Branch creation, commit, PR creation — mocked fetch tests verifying correct API calls and headers.
+- **Agent instructions**: Fetching `.migration-agent.md`, 404 fallback, custom instructions override.
+- **Edge cases**: Cancel non-existent job (404), claim when table is empty (null), empty file changes from AI (no branch/PR created), shutdown timeout exceeded.
+
+### Test File Organization
+
+- `packages/server/src/services/MigrationAgent.test.ts` — agent lifecycle, poll loop, job processing, shutdown
+- `packages/server/src/services/AIProvider.test.ts` — CopilotProvider request/response, instruction precedence
+- `packages/server/src/services/GitHubService.test.ts` — branch, commit, PR operations
+- `packages/server/src/api/migrationRoutes.test.ts` — extend existing test file with list, cancel, and validation tests
+- `packages/server/src/db/RepositoryDb.migrations.test.ts` — claimNextJob, updateMigrationStatus, listMigrations, cancelMigration

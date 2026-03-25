@@ -10,6 +10,9 @@ import { RegistryClient } from './scoring/RegistryClient';
 import { FreshnessService } from './services/FreshnessService';
 import { IngestionService } from './services/IngestionService';
 import { TokenService } from './services/TokenService';
+import { CopilotProvider, ClaudeProvider } from './services/AIProvider';
+import { GitHubService } from './services/GitHubService';
+import { MigrationAgent, parseMigrationAgentConfig } from './services/MigrationAgent';
 import {
   createFreshnessRouter,
   createIngestionRouter,
@@ -137,6 +140,48 @@ async function main() {
 
   const ingestionService = new IngestionService(db, { freshnessService });
 
+  // Step 6: Set up migration agent (opt-in via AI_PROVIDER_API_KEY)
+  let migrationAgent: MigrationAgent | null = null;
+  const aiProviderApiKey = process.env.AI_PROVIDER_API_KEY;
+
+  if (aiProviderApiKey) {
+    const aiProviderType = process.env.AI_PROVIDER_TYPE ?? 'copilot';
+    const aiProviderEndpoint = process.env.AI_PROVIDER_ENDPOINT;
+    const aiProviderModel = process.env.AI_PROVIDER_MODEL;
+
+    let aiProvider: import('./models/types').AIProvider;
+
+    if (aiProviderType === 'claude') {
+      aiProvider = new ClaudeProvider({
+        apiKey: aiProviderApiKey,
+        endpoint: aiProviderEndpoint,
+        model: aiProviderModel,
+      });
+    } else {
+      aiProvider = new CopilotProvider({
+        apiKey: aiProviderApiKey,
+        endpoint: aiProviderEndpoint ?? 'https://models.inference.ai.azure.com',
+        model: aiProviderModel,
+      });
+    }
+
+    const githubService = new GitHubService();
+    const agentConfig = parseMigrationAgentConfig(process.env as Record<string, string | undefined>);
+
+    migrationAgent = new MigrationAgent(
+      db,
+      tokenService,
+      freshnessService,
+      aiProvider,
+      githubService,
+      agentConfig,
+    );
+    migrationAgent.start();
+    console.log('Migration agent started.');
+  } else {
+    console.log('Migration agent disabled (AI_PROVIDER_API_KEY not set).');
+  }
+
   const app = createApp(pool, db, ingestionService, tokenService, freshnessService);
 
   const PORT = Number(process.env.PORT ?? 3000);
@@ -158,15 +203,21 @@ async function main() {
     }, 30_000);
     forceTimeout.unref();
 
-    server.close(() => {
-      pool.end().then(() => {
+    server.close(async () => {
+      try {
+        if (migrationAgent) {
+          console.log('Stopping migration agent...');
+          await migrationAgent.stop();
+          console.log('Migration agent stopped.');
+        }
+        await pool.end();
         clearTimeout(forceTimeout);
         console.log('Database pool closed.');
         process.exit(0);
-      }).catch((err) => {
-        console.error('Error closing database pool:', err);
+      } catch (err) {
+        console.error('Error during shutdown:', err);
         process.exit(1);
-      });
+      }
     });
   }
 

@@ -201,3 +201,46 @@ export interface MigrationStatus {
   updatedAt: Date;
 }
 
+// =============================================================================
+// AI Migration Agent
+// =============================================================================
+
+export interface UpgradeTarget {
+  dependencyName: string;
+  ecosystem: string;
+  currentVersion: string;
+  targetVersion?: string;
+}
+
+export interface FileChange {
+  filePath: string;
+  originalContent: string;
+  modifiedContent: string;
+}
+
+export interface AIProviderRequest {
+  upgradeTargets: UpgradeTarget[];
+  agentInstructions: string;
+  repositoryContext: {
+    fileTree: FileEntry[];
+    manifestContents: Record<string, string>;
+    repoName: string;
+  };
+}
+
+export interface AIProviderResponse {
+  fileChanges: FileChange[];
+  prDescription: string;
+  errors: Array<{ dependencyName: string; error: string }>;
+}
+
+export interface MigrationParameters {
+  dependencies?: Array<{ name: string; ecosystem?: string; targetVersion?: string }>;
+  upgradeAll?: boolean;
+  customInstructions?: string;
+}
+
+export interface AIProvider {
+  generateChanges(request: AIProviderRequest): Promise<AIProviderResponse>;
+}
+

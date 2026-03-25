@@ -14,6 +14,7 @@ import { MigrationTriggerComponent } from './components/migration-trigger/migrat
 import { RepositorySelectorComponent } from './components/repository-selector/repository-selector.component';
 import { FreshnessGradeComponent } from './components/freshness-grade/freshness-grade.component';
 import { FreshnessTableComponent } from './components/freshness-table/freshness-table.component';
+import { DependencyPanelComponent } from './components/dependency-panel/dependency-panel.component';
 import { NgxChartsModule } from '@swimlane/ngx-charts';
 import { MatCardModule } from '@angular/material/card';
 import { MatToolbarModule } from '@angular/material/toolbar';
@@ -48,6 +49,7 @@ const routes: Routes = [
     RepositorySelectorComponent,
     FreshnessGradeComponent,
     FreshnessTableComponent,
+    DependencyPanelComponent,
   ],
   imports: [
     CommonModule,

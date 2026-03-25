@@ -13,7 +13,7 @@ export class MigrationService {
   triggerMigration(
     repositoryId: string,
     migrationType: string,
-    parameters?: Record<string, string>,
+    parameters?: Record<string, unknown>,
   ): Observable<{ migrationId: string; status: string }> {
     return this.http.post<{ migrationId: string; status: string }>(
       `${this.apiBase}/migrations`,

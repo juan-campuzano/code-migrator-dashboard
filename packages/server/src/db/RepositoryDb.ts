@@ -414,6 +414,92 @@ export class RepositoryDb {
       };
     }
 
+    /**
+     * Atomically claim the oldest queued ai-upgrade job.
+     * Uses SELECT FOR UPDATE SKIP LOCKED to avoid contention.
+     * Returns null if no queued jobs exist.
+     */
+    async claimNextJob(): Promise<MigrationStatus | null> {
+      const result = await this.pool.query(
+        `UPDATE migrations
+         SET status = 'running', updated_at = NOW()
+         WHERE id = (
+           SELECT id FROM migrations
+           WHERE status = 'queued'
+           ORDER BY created_at ASC
+           LIMIT 1
+           FOR UPDATE SKIP LOCKED
+         )
+         RETURNING id, repository_id, migration_type, parameters, status, result, error_details, created_at, updated_at`,
+      );
+      if (result.rows.length === 0) return null;
+      return this.mapMigration(result.rows[0]);
+    }
+
+    /**
+     * Update a migration's status, result, and/or error_details.
+     */
+    async updateMigrationStatus(
+      id: string,
+      status: MigrationStatus['status'],
+      result?: string,
+      errorDetails?: string,
+    ): Promise<void> {
+      await this.pool.query(
+        `UPDATE migrations
+         SET status = $2, result = $3, error_details = $4, updated_at = NOW()
+         WHERE id = $1`,
+        [id, status, result ?? null, errorDetails ?? null],
+      );
+    }
+
+    /**
+     * List migrations with optional repositoryId and status filters,
+     * ordered by created_at DESC.
+     */
+    async listMigrations(filters?: {
+      repositoryId?: string;
+      status?: string;
+    }): Promise<MigrationStatus[]> {
+      const conditions: string[] = [];
+      const params: unknown[] = [];
+      let paramIndex = 1;
+
+      if (filters?.repositoryId) {
+        conditions.push(`repository_id = $${paramIndex++}`);
+        params.push(filters.repositoryId);
+      }
+      if (filters?.status) {
+        conditions.push(`status = $${paramIndex++}`);
+        params.push(filters.status);
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      const result = await this.pool.query(
+        `SELECT id, repository_id, migration_type, parameters, status, result, error_details, created_at, updated_at
+         FROM migrations
+         ${whereClause}
+         ORDER BY created_at DESC`,
+        params,
+      );
+      return result.rows.map((row: Record<string, unknown>) => this.mapMigration(row));
+    }
+
+    /**
+     * Cancel a queued migration. Returns true if cancelled, false otherwise.
+     */
+    async cancelMigration(id: string): Promise<boolean> {
+      const result = await this.pool.query(
+        `UPDATE migrations
+         SET status = 'failed', error_details = 'Cancelled by user', updated_at = NOW()
+         WHERE id = $1 AND status = 'queued'
+         RETURNING id`,
+        [id],
+      );
+      return result.rows.length > 0;
+    }
+
     private mapMigration(row: Record<string, unknown>): MigrationStatus {
       return {
         migrationId: row.id as string,

@@ -198,7 +198,7 @@ export class TokenSettingsComponent implements OnInit {
   loadConfiguredProviders(): void {
     this.repositoryService.getTokens().subscribe({
       next: (result) => {
-        this.configuredProviders = result.providers;
+        this.configuredProviders = result?.providers ?? [];
       },
       error: () => {
         this.configuredProviders = [];

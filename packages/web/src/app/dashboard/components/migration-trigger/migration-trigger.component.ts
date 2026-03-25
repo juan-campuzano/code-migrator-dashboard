@@ -25,8 +25,10 @@ import { switchMap } from 'rxjs/operators';
                 name="migrationType"
                 aria-label="Migration type"
                 required
+                (ngModelChange)="onMigrationTypeChange()"
               >
                 <option value="" disabled selected>Select type…</option>
+                <option value="ai-upgrade">AI Upgrade</option>
                 <option value="framework_upgrade">Framework Upgrade</option>
                 <option value="dependency_migration">Dependency Migration</option>
               </select>
@@ -34,7 +36,7 @@ import { switchMap } from 'rxjs/operators';
             </div>
           </div>
 
-          <div class="field-group">
+          <div class="field-group" *ngIf="migrationType !== 'ai-upgrade'">
             <label class="field-label" for="migrationParams">Parameters (optional)</label>
             <input
               id="migrationParams"
@@ -48,14 +50,47 @@ import { switchMap } from 'rxjs/operators';
           </div>
         </div>
 
+        <div *ngIf="migrationType === 'ai-upgrade'" class="ai-upgrade-options">
+          <div class="form-row">
+            <div class="field-group">
+              <label class="field-label">Upgrade Mode</label>
+              <div class="select-container">
+                <select
+                  class="native-select"
+                  [(ngModel)]="aiUpgradeMode"
+                  name="aiUpgradeMode"
+                  aria-label="Upgrade mode"
+                >
+                  <option value="all">Upgrade all outdated</option>
+                  <option value="specific">Specific dependencies</option>
+                </select>
+                <mat-icon class="select-arrow">expand_more</mat-icon>
+              </div>
+            </div>
+            <div class="field-group" *ngIf="aiUpgradeMode === 'specific'">
+              <label class="field-label" for="aiDeps">Dependencies (comma-separated)</label>
+              <input
+                id="aiDeps"
+                type="text"
+                class="native-input"
+                [(ngModel)]="aiDependenciesInput"
+                name="aiDeps"
+                placeholder="e.g. express, lodash"
+                aria-label="Dependencies to upgrade"
+              />
+            </div>
+          </div>
+        </div>
+
         <button
           class="action-btn"
           type="button"
           (click)="triggerMigration()"
           [disabled]="!canTrigger()"
+          [attr.title]="!repositoryId ? 'Select a repository first' : !migrationType ? 'Select a migration type' : loading ? 'Migration in progress' : 'Run migration'"
         >
           <mat-icon class="btn-icon">{{ loading ? 'hourglass_empty' : 'play_arrow' }}</mat-icon>
-          {{ loading ? 'Triggering...' : 'Run Migration' }}
+          {{ loading ? 'Triggering...' : !repositoryId ? 'Select a repository first' : 'Run Migration' }}
         </button>
       </div>
 
@@ -234,6 +269,9 @@ import { switchMap } from 'rxjs/operators';
       background: #fce4ec;
       color: #c62828;
     }
+    .ai-upgrade-options {
+      margin-top: 4px;
+    }
   `],
 })
 export class MigrationTriggerComponent implements OnDestroy {
@@ -243,6 +281,9 @@ export class MigrationTriggerComponent implements OnDestroy {
   parametersInput = '';
   loading = false;
   errorMessage = '';
+
+  aiUpgradeMode: 'all' | 'specific' = 'all';
+  aiDependenciesInput = '';
 
   migrationId: string | null = null;
   migrationStatus: 'idle' | 'queued' | 'running' | 'completed' | 'failed' = 'idle';
@@ -265,7 +306,22 @@ export class MigrationTriggerComponent implements OnDestroy {
     this.loading = true;
     this.errorMessage = '';
 
-    const params = this.parseParameters(this.parametersInput);
+    let params: Record<string, unknown> | undefined;
+
+    if (this.migrationType === 'ai-upgrade') {
+      if (this.aiUpgradeMode === 'all') {
+        params = { upgradeAll: true };
+      } else {
+        const deps = this.aiDependenciesInput
+          .split(',')
+          .map((d) => d.trim())
+          .filter((d) => d.length > 0)
+          .map((name) => ({ name }));
+        params = { dependencies: deps };
+      }
+    } else {
+      params = this.parseParameters(this.parametersInput);
+    }
 
     this.migrationService
       .triggerMigration(this.repositoryId!, this.migrationType, params)
@@ -292,7 +348,15 @@ export class MigrationTriggerComponent implements OnDestroy {
     this.migrationError = null;
     this.migrationType = '';
     this.parametersInput = '';
+    this.aiUpgradeMode = 'all';
+    this.aiDependenciesInput = '';
     this.errorMessage = '';
+  }
+
+  onMigrationTypeChange(): void {
+    this.aiUpgradeMode = 'all';
+    this.aiDependenciesInput = '';
+    this.parametersInput = '';
   }
 
   ngOnDestroy(): void {

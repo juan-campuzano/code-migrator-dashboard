@@ -55,12 +55,66 @@ export function createMigrationRouter(db: RepositoryDb): Router {
         return;
       }
 
+      // Validate repository is a GitHub repository for ai-upgrade migrations
+      if (repo.sourceType !== 'github') {
+        const error: ApiError = {
+          code: 'VALIDATION_ERROR',
+          message: 'AI migrations are only supported for GitHub repositories.',
+        };
+        res.status(422).json(error);
+        return;
+      }
+
       const migration = await db.createMigration(repositoryId, migrationType, parameters);
 
       res.status(202).json({
         migrationId: migration.migrationId,
         status: migration.status,
       });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ code: 'INTERNAL_ERROR', message } satisfies ApiError);
+    }
+  });
+
+  router.get('/', async (_req: Request, res: Response) => {
+    try {
+      const repositoryId = typeof _req.query.repositoryId === 'string' ? _req.query.repositoryId : undefined;
+      const status = typeof _req.query.status === 'string' ? _req.query.status : undefined;
+
+      const migrations = await db.listMigrations({ repositoryId, status });
+      res.status(200).json(migrations);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ code: 'INTERNAL_ERROR', message } satisfies ApiError);
+    }
+  });
+
+  router.post('/:id/cancel', async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const migration = await db.getMigrationById(id);
+      if (!migration) {
+        const error: ApiError = {
+          code: 'NOT_FOUND',
+          message: `Migration with ID "${id}" not found.`,
+        };
+        res.status(404).json(error);
+        return;
+      }
+
+      const cancelled = await db.cancelMigration(id);
+      if (!cancelled) {
+        const error: ApiError = {
+          code: 'CONFLICT',
+          message: `Migration "${id}" is not in queued status and cannot be cancelled.`,
+        };
+        res.status(409).json(error);
+        return;
+      }
+
+      res.status(200).json({ migrationId: id, status: 'failed' });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(500).json({ code: 'INTERNAL_ERROR', message } satisfies ApiError);
