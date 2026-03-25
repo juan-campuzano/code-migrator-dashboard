@@ -238,9 +238,41 @@ export class CopilotProvider implements AIProvider {
 // =============================================================================
 
 export function parseAIResponse(content: string): AIProviderResponse {
-  const jsonBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  const jsonStr = jsonBlockMatch ? jsonBlockMatch[1] : content;
+  // Try multiple strategies to extract JSON from the AI response
 
+  // Strategy 1: Find the last ```json ... ``` block (greedy match to get the full JSON)
+  const jsonBlockMatch = content.match(/```json\s*\n([\s\S]*)\n```/);
+  if (jsonBlockMatch) {
+    // The greedy match may capture too much if there are multiple code blocks.
+    // Find the matching closing ``` by looking for the last one.
+    let jsonStr = jsonBlockMatch[1];
+    // If there are nested ``` inside, we need the content up to the final ```
+    // The greedy regex already handles this — it captures everything between the first ```json and the last ```
+    const result = tryParseJson(jsonStr);
+    if (result) return result;
+  }
+
+  // Strategy 2: Try to find a JSON object starting with { "fileChanges" in the raw content
+  const jsonObjectMatch = content.match(/\{[\s\S]*"fileChanges"[\s\S]*\}/);
+  if (jsonObjectMatch) {
+    // Try to find the balanced JSON by parsing from the match
+    const result = tryExtractBalancedJson(content, jsonObjectMatch.index ?? 0);
+    if (result) return result;
+  }
+
+  // Strategy 3: Try parsing the entire content as JSON
+  const result = tryParseJson(content);
+  if (result) return result;
+
+  // Fallback: return empty changes with the raw content as description
+  return {
+    fileChanges: [],
+    prDescription: content,
+    errors: [{ dependencyName: 'unknown', error: 'Failed to parse AI response as JSON' }],
+  };
+}
+
+function tryParseJson(jsonStr: string): AIProviderResponse | null {
   try {
     const parsed = JSON.parse(jsonStr.trim()) as {
       fileChanges?: Array<{ filePath: string; originalContent: string; modifiedContent: string }>;
@@ -254,12 +286,47 @@ export function parseAIResponse(content: string): AIProviderResponse {
       errors: Array.isArray(parsed.errors) ? parsed.errors : [],
     };
   } catch {
-    return {
-      fileChanges: [],
-      prDescription: content,
-      errors: [{ dependencyName: 'unknown', error: 'Failed to parse AI response as JSON' }],
-    };
+    return null;
   }
+}
+
+function tryExtractBalancedJson(content: string, startIndex: number): AIProviderResponse | null {
+  // Walk forward from startIndex to find a balanced JSON object
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = startIndex; i < content.length; i++) {
+    const ch = content[i];
+
+    if (escape) {
+      escape = false;
+      continue;
+    }
+
+    if (ch === '\\' && inString) {
+      escape = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (!inString) {
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          const jsonStr = content.substring(startIndex, i + 1);
+          return tryParseJson(jsonStr);
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 // =============================================================================
