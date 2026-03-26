@@ -29,9 +29,24 @@ export class McpClaudeProvider implements AIProvider {
     const userPrompt = buildUserPromptText(request);
     const systemContext = buildSystemPromptText(request);
 
-    // Combine the system context (repo info, instructions) with the user prompt
-    // The ClaudeConversationClient will add its own system prompt from SystemPromptManager
-    const fullUserMessage = `${systemContext}\n\n${userPrompt}`;
+    // Combine the system context (repo info, instructions) with the user prompt.
+    // Reinforce the JSON output format since the conversation loop with MCP tools
+    // can cause Claude to respond conversationally instead of with structured JSON.
+    const jsonReminder = `
+
+IMPORTANT: After using any tools, you MUST respond with ONLY a JSON block in this exact format:
+\`\`\`json
+{
+  "fileChanges": [
+    { "filePath": "path/to/file", "originalContent": "...", "modifiedContent": "..." }
+  ],
+  "prDescription": "markdown description of changes",
+  "errors": []
+}
+\`\`\`
+Do NOT include any text outside the JSON block. The originalContent must match the current file content exactly.`;
+
+    const fullUserMessage = `${systemContext}\n\n${userPrompt}${jsonReminder}`;
 
     console.log(`[McpClaudeProvider] MCP connected: ${this.mcpClient.isConnected()}`);
     console.log(`[McpClaudeProvider] Tools available: ${this.mcpClient.getTools().length}`);
