@@ -72,6 +72,32 @@ export function aggregate(
 }
 
 /**
+ * Compute a portfolio-level freshness score as the weighted average of
+ * individual repository scores, weighted by each repo's scored dependency count.
+ *
+ * Formula: Σ(repo.weightedAverage × repo.scoredDependencyCount) / Σ(repo.scoredDependencyCount)
+ *
+ * Returns 100 when no scored dependencies exist (denominator is 0).
+ */
+export function computePortfolioScore(
+  repos: Array<{ weightedAverage: number; scoredDependencyCount: number }>
+): number {
+  let numerator = 0;
+  let denominator = 0;
+
+  for (const repo of repos) {
+    numerator += repo.weightedAverage * repo.scoredDependencyCount;
+    denominator += repo.scoredDependencyCount;
+  }
+
+  if (denominator === 0) {
+    return 100;
+  }
+
+  return numerator / denominator;
+}
+
+/**
  * Map a numeric score to a letter grade.
  *
  * A: 90–100, B: 70–89, C: 50–69, D: 30–49, E: 0–29

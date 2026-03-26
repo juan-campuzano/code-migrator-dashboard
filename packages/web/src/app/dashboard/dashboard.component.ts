@@ -21,6 +21,10 @@ import { ScanError } from './components/error-banner/error-banner.component';
               <p class="header-subtitle">Scan, analyze and manage your repositories</p>
             </div>
           </div>
+          <a class="metrics-nav-link" routerLink="/metrics">
+            <mat-icon class="metrics-nav-icon">insights</mat-icon>
+            Metrics Overview
+          </a>
         </div>
       </header>
 
@@ -154,6 +158,38 @@ import { ScanError } from './components/error-banner/error-banner.component';
       font-size: 13px;
       opacity: 0.75;
       font-weight: 400;
+    }
+
+    /* ── Metrics nav link ── */
+    .metrics-nav-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: rgba(255, 255, 255, 0.88);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.3px;
+      padding: 7px 16px;
+      border-radius: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      background: rgba(255, 255, 255, 0.08);
+      transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .metrics-nav-link:hover {
+      background: rgba(255, 255, 255, 0.18);
+      border-color: rgba(255, 255, 255, 0.45);
+      color: #fff;
+    }
+
+    .metrics-nav-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+      opacity: 0.9;
     }
 
     /* ── Main container ── */

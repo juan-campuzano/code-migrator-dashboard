@@ -16,6 +16,7 @@ import { MigrationAgent, parseMigrationAgentConfig } from './services/MigrationA
 import {
   createFreshnessRouter,
   createIngestionRouter,
+  createMetricsRouter,
   createRepositoryRouter,
   createTokenRouter,
   createMigrationRouter,
@@ -71,6 +72,7 @@ function createApp(pool: Pool, db: RepositoryDb, ingestionService: IngestionServ
   if (tokenService) {
     app.use('/api/settings/tokens', createTokenRouter(tokenService));
   }
+  app.use('/api/metrics', createMetricsRouter(db));
   app.use('/api/migrations', createMigrationRouter(db));
 
   // Error handling middleware
