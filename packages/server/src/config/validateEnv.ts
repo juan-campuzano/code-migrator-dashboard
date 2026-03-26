@@ -55,7 +55,7 @@ export function validateEnv(env: Record<string, string | undefined>): EnvValidat
   }
 
   // Validate AI_PROVIDER_TYPE if provided
-  const SUPPORTED_AI_PROVIDERS = ['copilot', 'claude', 'gemini'];
+  const SUPPORTED_AI_PROVIDERS = ['copilot', 'claude', 'claude-mcp', 'gemini'];
   const aiProviderType = env.AI_PROVIDER_TYPE;
   if (aiProviderType !== undefined && aiProviderType !== '') {
     if (!SUPPORTED_AI_PROVIDERS.includes(aiProviderType)) {

@@ -6,3 +6,7 @@ export { CopilotProvider, ClaudeProvider, resolveAgentInstructions, buildPrDescr
 export { MigrationAgent, filterDependenciesByThreshold, parseMigrationAgentConfig } from './MigrationAgent';
 export type { MigrationAgentConfig } from './MigrationAgent';
 export { MetricsService } from './MetricsService';
+export { SystemPromptManager } from './SystemPromptManager';
+export { McpClientService } from './McpClientService';
+export { ClaudeConversationClient } from './ClaudeConversationClient';
+export { McpClaudeProvider } from './McpClaudeProvider';

@@ -6,6 +6,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatButtonModule } from '@angular/material/button';
+import { MatIconModule } from '@angular/material/icon';
 import { MigrationTriggerComponent } from './migration-trigger.component';
 import { MigrationService } from '../../services/migration.service';
 import { of, throwError } from 'rxjs';
@@ -24,7 +25,7 @@ describe('MigrationTriggerComponent', () => {
 
     await TestBed.configureTestingModule({
       declarations: [MigrationTriggerComponent],
-      imports: [FormsModule, HttpClientTestingModule, NoopAnimationsModule, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule],
+      imports: [FormsModule, HttpClientTestingModule, NoopAnimationsModule, MatFormFieldModule, MatInputModule, MatSelectModule, MatButtonModule, MatIconModule],
       providers: [{ provide: MigrationService, useValue: spy }],
     }).compileComponents();
 
@@ -207,7 +208,7 @@ describe('MigrationTriggerComponent', () => {
   describe('template', () => {
     it('should show migration form when no migration is active', () => {
       const compiled = fixture.nativeElement as HTMLElement;
-      expect(compiled.querySelector('mat-select')).toBeTruthy();
+      expect(compiled.querySelector('select#migrationType')).toBeTruthy();
       expect(compiled.querySelector('input#migrationParams')).toBeTruthy();
       expect(compiled.querySelector('button')).toBeTruthy();
     });
@@ -232,14 +233,14 @@ describe('MigrationTriggerComponent', () => {
       expect(button.disabled).toBeTrue();
     });
 
-    it('should render mat-select for migration types', () => {
-      const matSelect = fixture.nativeElement.querySelector('mat-select');
-      expect(matSelect).toBeTruthy();
+    it('should render native select for migration types', () => {
+      const nativeSelect = fixture.nativeElement.querySelector('select#migrationType');
+      expect(nativeSelect).toBeTruthy();
     });
 
-    it('should wrap select in mat-form-field with outline appearance', () => {
-      const formFields = fixture.nativeElement.querySelectorAll('mat-form-field');
-      expect(formFields.length).toBeGreaterThanOrEqual(1);
+    it('should wrap select in field-group container', () => {
+      const fieldGroups = fixture.nativeElement.querySelectorAll('.field-group');
+      expect(fieldGroups.length).toBeGreaterThanOrEqual(1);
     });
   });
 });

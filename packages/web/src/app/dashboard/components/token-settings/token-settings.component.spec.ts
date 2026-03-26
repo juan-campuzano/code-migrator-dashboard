@@ -6,6 +6,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatButtonModule } from '@angular/material/button';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { MatIconModule } from '@angular/material/icon';
 import { TokenSettingsComponent } from './token-settings.component';
 import { RepositoryService } from '../../services/repository.service';
 import { of, throwError } from 'rxjs';
@@ -30,6 +31,7 @@ describe('TokenSettingsComponent', () => {
         MatInputModule,
         MatButtonModule,
         MatSnackBarModule,
+        MatIconModule,
       ],
       providers: [{ provide: RepositoryService, useValue: spy }],
     }).compileComponents();
@@ -55,7 +57,7 @@ describe('TokenSettingsComponent', () => {
       component.ngOnInit();
       fixture.detectChanges();
 
-      const items = fixture.nativeElement.querySelectorAll('.configured-provider');
+      const items = fixture.nativeElement.querySelectorAll('.provider-chip');
       expect(items.length).toBe(1);
       expect(items[0].textContent).toContain('GitHub');
     });
@@ -65,7 +67,7 @@ describe('TokenSettingsComponent', () => {
       component.ngOnInit();
       fixture.detectChanges();
 
-      const items = fixture.nativeElement.querySelectorAll('.configured-provider');
+      const items = fixture.nativeElement.querySelectorAll('.provider-chip');
       expect(items.length).toBe(2);
       expect(items[0].textContent).toContain('GitHub');
       expect(items[1].textContent).toContain('Azure DevOps');
@@ -107,12 +109,9 @@ describe('TokenSettingsComponent', () => {
       expect(input.type).toBe('password');
     });
 
-    it('should wrap inputs in mat-form-field with outline appearance', () => {
-      const formFields = fixture.nativeElement.querySelectorAll('mat-form-field');
-      expect(formFields.length).toBe(2);
-      formFields.forEach((field: Element) => {
-        expect(field.getAttribute('appearance')).toBe('outline');
-      });
+    it('should wrap inputs in field-group containers', () => {
+      const fieldGroups = fixture.nativeElement.querySelectorAll('.field-group');
+      expect(fieldGroups.length).toBe(2);
     });
 
     it('should have a save button', () => {
@@ -130,11 +129,9 @@ describe('TokenSettingsComponent', () => {
       expect(button.disabled).toBeTrue();
     });
 
-    it('should have mat-error elements for validation', () => {
-      // mat-error is only rendered when the form control is in error state
-      // Verify the mat-form-field elements exist (mat-error is defined in template)
-      const formFields = fixture.nativeElement.querySelectorAll('mat-form-field');
-      expect(formFields.length).toBe(2);
+    it('should have field labels for inputs', () => {
+      const labels = fixture.nativeElement.querySelectorAll('.field-label');
+      expect(labels.length).toBe(2);
     });
   });
 

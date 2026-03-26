@@ -1,5 +1,6 @@
 import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testing';
 import { HttpClientTestingModule } from '@angular/common/http/testing';
+import { MatIconModule } from '@angular/material/icon';
 import { IngestionStatusComponent } from './ingestion-status.component';
 import { RepositoryService } from '../../services/repository.service';
 import { IngestionRecord } from '../../models/repository.models';
@@ -38,7 +39,7 @@ describe('IngestionStatusComponent', () => {
 
     await TestBed.configureTestingModule({
       declarations: [IngestionStatusComponent],
-      imports: [HttpClientTestingModule],
+      imports: [HttpClientTestingModule, MatIconModule],
       providers: [{ provide: RepositoryService, useValue: spy }],
     }).compileComponents();
 
@@ -194,13 +195,13 @@ describe('IngestionStatusComponent', () => {
     expect(spinner).toBeFalsy();
   });
 
-  it('should display error notification in template when failed', () => {
+  it('should display error message in template when failed', () => {
     repositoryService.getIngestionStatus.and.returnValue(of(failedRecord));
     component.ingestionId = 'ing-1';
     component.ngOnInit();
     fixture.detectChanges();
 
-    const errorEl = fixture.nativeElement.querySelector('.error-notification');
+    const errorEl = fixture.nativeElement.querySelector('.error-message');
     expect(errorEl).toBeTruthy();
     expect(errorEl.textContent).toContain('Repository not found');
   });

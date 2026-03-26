@@ -21,10 +21,16 @@ import { ScanError } from './components/error-banner/error-banner.component';
               <p class="header-subtitle">Scan, analyze and manage your repositories</p>
             </div>
           </div>
-          <a class="metrics-nav-link" routerLink="/metrics">
-            <mat-icon class="metrics-nav-icon">insights</mat-icon>
-            Metrics Overview
-          </a>
+          <div class="header-nav">
+            <a class="metrics-nav-link" routerLink="/metrics">
+              <mat-icon class="metrics-nav-icon">insights</mat-icon>
+              Metrics Overview
+            </a>
+            <a class="metrics-nav-link" routerLink="/mcp">
+              <mat-icon class="metrics-nav-icon">memory</mat-icon>
+              MCP Console
+            </a>
+          </div>
         </div>
       </header>
 
@@ -158,6 +164,13 @@ import { ScanError } from './components/error-banner/error-banner.component';
       font-size: 13px;
       opacity: 0.75;
       font-weight: 400;
+    }
+
+    /* ── Header nav ── */
+    .header-nav {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
 
     /* ── Metrics nav link ── */

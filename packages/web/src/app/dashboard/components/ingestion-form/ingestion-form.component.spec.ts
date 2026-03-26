@@ -8,6 +8,7 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatButtonModule } from '@angular/material/button';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatCardModule } from '@angular/material/card';
+import { MatIconModule } from '@angular/material/icon';
 import { IngestionFormComponent } from './ingestion-form.component';
 import { RepositoryService } from '../../services/repository.service';
 import { of, throwError } from 'rxjs';
@@ -32,6 +33,7 @@ describe('IngestionFormComponent', () => {
         MatButtonModule,
         MatSnackBarModule,
         MatCardModule,
+        MatIconModule,
       ],
       providers: [{ provide: RepositoryService, useValue: spy }],
     }).compileComponents();
@@ -184,22 +186,22 @@ describe('IngestionFormComponent', () => {
   });
 
   describe('error display', () => {
-    it('should display error in a mat-card with error-container styling', () => {
+    it('should display error in a div with error-container styling', () => {
       component.errorMessage = 'Something went wrong';
       fixture.detectChanges();
 
-      const errorCard = fixture.nativeElement.querySelector('mat-card.error-container') as HTMLElement;
-      expect(errorCard).toBeTruthy();
-      expect(errorCard.textContent).toContain('Something went wrong');
-      expect(errorCard.getAttribute('role')).toBe('alert');
+      const errorDiv = fixture.nativeElement.querySelector('.error-container') as HTMLElement;
+      expect(errorDiv).toBeTruthy();
+      expect(errorDiv.textContent).toContain('Something went wrong');
+      expect(errorDiv.getAttribute('role')).toBe('alert');
     });
 
-    it('should not display error mat-card when there is no error', () => {
+    it('should not display error container when there is no error', () => {
       component.errorMessage = '';
       fixture.detectChanges();
 
-      const errorCard = fixture.nativeElement.querySelector('mat-card.error-container');
-      expect(errorCard).toBeFalsy();
+      const errorDiv = fixture.nativeElement.querySelector('.error-container');
+      expect(errorDiv).toBeFalsy();
     });
   });
 });

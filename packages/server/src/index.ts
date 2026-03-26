@@ -20,7 +20,12 @@ import {
   createRepositoryRouter,
   createTokenRouter,
   createMigrationRouter,
+  createMcpRouter,
 } from './api';
+import { McpClientService } from './services/McpClientService';
+import { SystemPromptManager } from './services/SystemPromptManager';
+import { ClaudeConversationClient } from './services/ClaudeConversationClient';
+import { McpClaudeProvider } from './services/McpClaudeProvider';
 import type { ApiError } from './models/types';
 import { validateEnv } from './config/validateEnv';
 import { validateDbConnection } from './db/validateConnection';
@@ -47,7 +52,7 @@ function createPool(): Pool {
 // Express app setup
 // ---------------------------------------------------------------------------
 
-function createApp(pool: Pool, db: RepositoryDb, ingestionService: IngestionService, tokenService: TokenService, freshnessService: FreshnessService) {
+function createApp(pool: Pool, db: RepositoryDb, ingestionService: IngestionService, tokenService: TokenService, freshnessService: FreshnessService, mcpClient?: McpClientService) {
   const app = express();
 
   app.use(express.json());
@@ -74,6 +79,13 @@ function createApp(pool: Pool, db: RepositoryDb, ingestionService: IngestionServ
   }
   app.use('/api/metrics', createMetricsRouter(db));
   app.use('/api/migrations', createMigrationRouter(db));
+
+  // Mount MCP integration routes
+  if (mcpClient) {
+    const promptManager = new SystemPromptManager();
+    const conversationClient = new ClaudeConversationClient(mcpClient, promptManager);
+    app.use('/api/mcp', createMcpRouter(mcpClient, promptManager, conversationClient));
+  }
 
   // Error handling middleware
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
@@ -142,7 +154,10 @@ async function main() {
 
   const ingestionService = new IngestionService(db, { freshnessService });
 
-  // Step 6: Set up migration agent (opt-in via AI_PROVIDER_API_KEY)
+  // Step 6: Set up MCP client service (shared singleton)
+  const mcpClient = new McpClientService();
+
+  // Step 7: Set up migration agent (opt-in via AI_PROVIDER_API_KEY)
   let migrationAgent: MigrationAgent | null = null;
   const aiProviderApiKey = process.env.AI_PROVIDER_API_KEY;
 
@@ -153,7 +168,18 @@ async function main() {
 
     let aiProvider: import('./models/types').AIProvider;
 
-    if (aiProviderType === 'claude') {
+    if (aiProviderType === 'claude-mcp') {
+      // Auto-start MCP server for tool-assisted migrations
+      try {
+        await mcpClient.start();
+        console.log('MCP server auto-started for claude-mcp provider.');
+      } catch (err) {
+        console.warn('Failed to auto-start MCP server, falling back to tool-less mode:', err);
+      }
+      const promptManager = new SystemPromptManager();
+      const conversationClient = new ClaudeConversationClient(mcpClient, promptManager);
+      aiProvider = new McpClaudeProvider(mcpClient, conversationClient);
+    } else if (aiProviderType === 'claude') {
       aiProvider = new ClaudeProvider({
         apiKey: aiProviderApiKey,
         endpoint: aiProviderEndpoint,
@@ -184,7 +210,7 @@ async function main() {
     console.log('Migration agent disabled (AI_PROVIDER_API_KEY not set).');
   }
 
-  const app = createApp(pool, db, ingestionService, tokenService, freshnessService);
+  const app = createApp(pool, db, ingestionService, tokenService, freshnessService, mcpClient);
 
   const PORT = Number(process.env.PORT ?? 3000);
 
@@ -212,6 +238,9 @@ async function main() {
           await migrationAgent.stop();
           console.log('Migration agent stopped.');
         }
+        console.log('Stopping MCP client...');
+        await mcpClient.stop();
+        console.log('MCP client stopped.');
         await pool.end();
         clearTimeout(forceTimeout);
         console.log('Database pool closed.');

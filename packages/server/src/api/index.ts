@@ -5,3 +5,4 @@ export { createMetricsRouter } from './metricsRoutes';
 export { createMigrationRouter } from './migrationRoutes';
 export { createRepositoryRouter } from './repositoryRoutes';
 export { createTokenRouter } from './tokenRoutes';
+export { createMcpRouter } from './mcpRoutes';

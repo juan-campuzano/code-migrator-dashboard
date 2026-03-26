@@ -11,4 +11,9 @@ export const routes: Routes = [
     loadChildren: () =>
       import('./metrics/metrics.module').then((m) => m.MetricsModule),
   },
+  {
+    path: 'mcp',
+    loadChildren: () =>
+      import('./mcp/mcp.module').then((m) => m.McpModule),
+  },
 ];
