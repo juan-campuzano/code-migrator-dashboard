@@ -213,10 +213,29 @@ export class MigrationAgent {
       // 3. Parse owner/repo from source identifier
       const { owner, repo } = this.parseGitHubSource(repository.sourceIdentifier);
 
-      // 4. Load repository context
+      // 4. Load repository context — fetch manifest files from GitHub
       const metadata = await this.db.getRepositoryMetadata(job.repositoryId);
-      const fileTree: FileEntry[] = metadata?.repository ? [] : [];
+      const fileTree: FileEntry[] = [];
       const manifestContents: Record<string, string> = {};
+
+      // Populate file tree from stored metadata
+      if (metadata?.dependencies) {
+        // Build a set of likely manifest files based on ecosystems
+        const manifestPaths = this.getManifestPaths(metadata.dependencies);
+        for (const manifestPath of manifestPaths) {
+          try {
+            const content = await this.githubService.getFileContent({
+              owner, repo, token, path: manifestPath,
+            });
+            if (content) {
+              manifestContents[manifestPath] = content;
+              fileTree.push({ path: manifestPath, type: 'file' });
+            }
+          } catch {
+            // Skip files that can't be fetched
+          }
+        }
+      }
 
       // 5. Build upgrade targets
       const params = (job.parameters ?? {}) as unknown as MigrationParameters;
@@ -256,9 +275,10 @@ export class MigrationAgent {
       // 8. If file changes were produced, create branch, commit, open PR
       if (aiResponse.fileChanges.length > 0) {
         const rawDescription = upgradeTargets.map((t) => t.dependencyName).join('-');
-        // Truncate description to keep branch name under GitHub's 522-byte ref limit
-        // "refs/heads/migration-agent/<uuid>-" is ~60 bytes, so cap description at ~200 chars
-        const description = rawDescription.length > 200 ? rawDescription.substring(0, 200) : rawDescription;
+        // Keep branch name short — use first 3 dependency names max, cap at 80 chars
+        const shortDesc = upgradeTargets.slice(0, 3).map((t) => t.dependencyName).join('-');
+        const suffix = upgradeTargets.length > 3 ? `-and-${upgradeTargets.length - 3}-more` : '';
+        const description = (shortDesc + suffix).substring(0, 80);
         const branchName = GitHubServiceStatic.buildBranchName(job.migrationId, description);
 
         const defaultBranch = await this.githubService.getDefaultBranch({ owner, repo, token });
@@ -391,6 +411,30 @@ export class MigrationAgent {
       return { owner: parts[parts.length - 2], repo: parts[parts.length - 1] };
     }
     return { owner: 'unknown', repo: 'unknown' };
+  }
+
+  /**
+   * Determine which manifest files to fetch based on the ecosystems
+   * present in the repository's dependencies.
+   */
+  private getManifestPaths(
+    dependencies: Array<{ ecosystem: string }>,
+  ): string[] {
+    const ecosystems = new Set(dependencies.map((d) => d.ecosystem));
+    const paths: string[] = [];
+
+    if (ecosystems.has('npm'))    paths.push('package.json', 'package-lock.json');
+    if (ecosystems.has('pip'))    paths.push('requirements.txt', 'pyproject.toml');
+    if (ecosystems.has('maven'))  paths.push('pom.xml');
+    if (ecosystems.has('gradle')) paths.push('build.gradle', 'build.gradle.kts');
+    if (ecosystems.has('cargo'))  paths.push('Cargo.toml');
+    if (ecosystems.has('go'))     paths.push('go.mod');
+    if (ecosystems.has('gem'))    paths.push('Gemfile');
+
+    // Always try package.json as a fallback
+    if (paths.length === 0) paths.push('package.json');
+
+    return paths;
   }
 }
 
