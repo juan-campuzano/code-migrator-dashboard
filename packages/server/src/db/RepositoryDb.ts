@@ -177,6 +177,14 @@ export class RepositoryDb {
       [repositoryId, JSON.stringify(tree)]
     );
   }
+  async getFileTree(repositoryId: string): Promise<FileEntry[]> {
+    const result = await this.pool.query(
+      `SELECT tree FROM repository_file_trees WHERE repository_id = $1`,
+      [repositoryId],
+    );
+    if (result.rows.length === 0) return [];
+    return result.rows[0].tree as FileEntry[];
+  }
 
   async upsertMetadataExtra(repositoryId: string, metadata: Record<string, unknown>): Promise<void> {
     await this.pool.query(

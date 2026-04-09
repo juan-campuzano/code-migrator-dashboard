@@ -29,6 +29,7 @@ function makeMockDb(overrides?: Partial<RepositoryDb>): RepositoryDb {
     updateMigrationStatus: vi.fn().mockResolvedValue(undefined),
     getRepository: vi.fn().mockResolvedValue(null),
     getRepositoryMetadata: vi.fn().mockResolvedValue(null),
+    getFileTree: vi.fn().mockResolvedValue([]),
     getFreshnessScores: vi.fn().mockResolvedValue(null),
     getRepositoryDependencies: vi.fn().mockResolvedValue([]),
     ...overrides,

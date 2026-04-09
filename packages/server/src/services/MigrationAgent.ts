@@ -215,13 +215,14 @@ export class MigrationAgent {
 
       // 4. Load repository context — fetch manifest files from GitHub
       const metadata = await this.db.getRepositoryMetadata(job.repositoryId);
+      const storedFileTree = await this.db.getFileTree(job.repositoryId);
       const fileTree: FileEntry[] = [];
       const manifestContents: Record<string, string> = {};
 
       // Populate file tree from stored metadata
       if (metadata?.dependencies) {
         // Build a set of likely manifest files based on ecosystems
-        const manifestPaths = this.getManifestPaths(metadata.dependencies);
+        const manifestPaths = this.getManifestPaths(metadata.dependencies, storedFileTree);
         for (const manifestPath of manifestPaths) {
           try {
             const content = await this.githubService.getFileContent({
@@ -264,7 +265,7 @@ export class MigrationAgent {
         upgradeTargets,
         agentInstructions,
         repositoryContext: {
-          fileTree,
+          fileTree: storedFileTree.length > 0 ? storedFileTree : fileTree,
           manifestContents,
           repoName: repository.name,
         },
@@ -317,7 +318,13 @@ export class MigrationAgent {
           prBody = dashboardDesc;
         }
 
-        const prTitle = `[Migration Agent] Upgrade ${upgradeTargets.map((t) => t.dependencyName).join(', ')}`;
+        const MAX_LISTED_DEPS = 3;
+        const depNames = upgradeTargets.map((t) => t.dependencyName);
+        const listed = depNames.slice(0, MAX_LISTED_DEPS).join(', ');
+        const prTitle =
+          depNames.length <= MAX_LISTED_DEPS
+            ? `[Migration Agent] Upgrade ${listed}`
+            : `[Migration Agent] Upgrade ${listed} and ${depNames.length - MAX_LISTED_DEPS} more`;
         const { prUrl } = await this.githubService.createPullRequest({
           owner,
           repo,
@@ -418,24 +425,39 @@ export class MigrationAgent {
    * present in the repository's dependencies.
    */
   private getManifestPaths(
-    dependencies: Array<{ ecosystem: string }>,
-  ): string[] {
-    const ecosystems = new Set(dependencies.map((d) => d.ecosystem));
-    const paths: string[] = [];
+      dependencies: Array<{ ecosystem: string }>,
+      storedFileTree: FileEntry[],
+    ): string[] {
+      const ecosystems = new Set(dependencies.map((d) => d.ecosystem));
+      const manifestFilenames = new Set<string>();
 
-    if (ecosystems.has('npm'))    paths.push('package.json', 'package-lock.json');
-    if (ecosystems.has('pip'))    paths.push('requirements.txt', 'pyproject.toml');
-    if (ecosystems.has('maven'))  paths.push('pom.xml');
-    if (ecosystems.has('gradle')) paths.push('build.gradle', 'build.gradle.kts');
-    if (ecosystems.has('cargo'))  paths.push('Cargo.toml');
-    if (ecosystems.has('go'))     paths.push('go.mod');
-    if (ecosystems.has('gem'))    paths.push('Gemfile');
+      if (ecosystems.has('npm'))    { manifestFilenames.add('package.json'); manifestFilenames.add('package-lock.json'); }
+      if (ecosystems.has('pip'))    { manifestFilenames.add('requirements.txt'); manifestFilenames.add('pyproject.toml'); }
+      if (ecosystems.has('maven'))  { manifestFilenames.add('pom.xml'); }
+      if (ecosystems.has('gradle')) { manifestFilenames.add('build.gradle'); manifestFilenames.add('build.gradle.kts'); }
+      if (ecosystems.has('cargo'))  { manifestFilenames.add('Cargo.toml'); }
+      if (ecosystems.has('go'))     { manifestFilenames.add('go.mod'); }
+      if (ecosystems.has('gem'))    { manifestFilenames.add('Gemfile'); }
 
-    // Always try package.json as a fallback
-    if (paths.length === 0) paths.push('package.json');
+      // Always try package.json as a fallback
+      if (manifestFilenames.size === 0) manifestFilenames.add('package.json');
 
-    return paths;
-  }
+      // If we have a stored file tree, search for manifest files at any depth
+      if (storedFileTree.length > 0) {
+        const matched = storedFileTree
+          .filter((entry) => entry.type === 'file')
+          .filter((entry) => {
+            const basename = entry.path.split('/').pop() ?? '';
+            return manifestFilenames.has(basename);
+          })
+          .map((entry) => entry.path);
+
+        if (matched.length > 0) return matched;
+      }
+
+      // Fallback to root-level paths if no file tree is available
+      return Array.from(manifestFilenames);
+    }
 }
 
 // Import the static method from GitHubService
