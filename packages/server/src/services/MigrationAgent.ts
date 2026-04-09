@@ -195,10 +195,12 @@ export class MigrationAgent {
   // ---------------------------------------------------------------------------
 
   private async processJob(job: MigrationStatus): Promise<void> {
+    console.log(`[MigrationAgent] Processing job ${job.migrationId} for repository ${job.repositoryId}`);
     try {
       // 1. Get GitHub token
       const token = await this.tokenService.getToken('github');
       if (!token) {
+        console.log(`[MigrationAgent] Job ${job.migrationId}: no GitHub token configured`);
         await this.db.updateMigrationStatus(
           job.migrationId,
           'failed',
@@ -211,6 +213,7 @@ export class MigrationAgent {
       // 2. Load repository
       const repository = await this.db.getRepository(job.repositoryId);
       if (!repository) {
+        console.log(`[MigrationAgent] Job ${job.migrationId}: repository not found`);
         await this.db.updateMigrationStatus(
           job.migrationId,
           'failed',
@@ -222,10 +225,12 @@ export class MigrationAgent {
 
       // 3. Parse owner/repo from source identifier
       const { owner, repo } = this.parseGitHubSource(repository.sourceIdentifier);
+      console.log(`[MigrationAgent] Job ${job.migrationId}: repo=${owner}/${repo}`);
 
       // 4. Load repository context — fetch manifest files from GitHub
       const metadata = await this.db.getRepositoryMetadata(job.repositoryId);
       const storedFileTree = await this.db.getFileTree(job.repositoryId);
+      console.log(`[MigrationAgent] Job ${job.migrationId}: stored file tree has ${storedFileTree.length} entries`);
       const fileTree: FileEntry[] = [];
       const manifestContents: Record<string, string> = {};
 
@@ -233,6 +238,7 @@ export class MigrationAgent {
       if (metadata?.dependencies) {
         // Build a set of likely manifest files based on ecosystems
         const manifestPaths = this.getManifestPaths(metadata.dependencies, storedFileTree);
+        console.log(`[MigrationAgent] Job ${job.migrationId}: manifest paths to fetch: ${JSON.stringify(manifestPaths)}`);
         for (const manifestPath of manifestPaths) {
           try {
             const content = await this.githubService.getFileContent({
@@ -243,9 +249,12 @@ export class MigrationAgent {
               fileTree.push({ path: manifestPath, type: 'file' });
             }
           } catch {
-            // Skip files that can't be fetched
+            console.log(`[MigrationAgent] Job ${job.migrationId}: failed to fetch ${manifestPath}`);
           }
         }
+        console.log(`[MigrationAgent] Job ${job.migrationId}: fetched ${Object.keys(manifestContents).length} manifest files`);
+      } else {
+        console.log(`[MigrationAgent] Job ${job.migrationId}: no metadata dependencies found`);
       }
 
       // 5. Build upgrade targets
@@ -260,6 +269,17 @@ export class MigrationAgent {
           ecosystem: d.ecosystem ?? 'unknown',
           currentVersion: d.targetVersion ?? 'unknown',
         }));
+      }
+      console.log(`[MigrationAgent] Job ${job.migrationId}: ${upgradeTargets.length} upgrade targets`);
+
+      if (upgradeTargets.length === 0) {
+        console.log(`[MigrationAgent] Job ${job.migrationId}: no upgrade targets, marking completed`);
+        await this.db.updateMigrationStatus(
+          job.migrationId,
+          'completed',
+          'No dependencies to upgrade.',
+        );
+        return;
       }
 
       // 6. Load agent instructions
@@ -281,7 +301,13 @@ export class MigrationAgent {
         },
       };
 
+      console.log(`[MigrationAgent] Job ${job.migrationId}: calling AI provider with ${Object.keys(manifestContents).length} manifests, ${request.repositoryContext.fileTree.length} file tree entries`);
       let aiResponse = await this.aiProvider.generateChanges(request);
+      console.log(`[MigrationAgent] Job ${job.migrationId}: AI returned ${aiResponse.fileChanges.length} file changes, ${aiResponse.errors.length} errors`);
+
+      if (aiResponse.errors.length > 0) {
+        console.log(`[MigrationAgent] Job ${job.migrationId}: AI errors: ${JSON.stringify(aiResponse.errors)}`);
+      }
 
       // 8. Validation loop — ask AI to analyze and fix errors
       if (aiResponse.fileChanges.length > 0 && this.aiProvider.validateAndFix) {
@@ -289,9 +315,9 @@ export class MigrationAgent {
 
         for (let attempt = 0; attempt < this.config.maxValidationRetries; attempt++) {
           const errors = await this.analyzeChanges(currentChanges, request.repositoryContext);
-          if (!errors) break; // No errors found
+          if (!errors) break;
 
-          console.log(`[MigrationAgent] Validation attempt ${attempt + 1}: found errors, requesting fix`);
+          console.log(`[MigrationAgent] Job ${job.migrationId}: validation attempt ${attempt + 1} found errors, requesting fix`);
 
           const validationRequest: ValidationRequest = {
             fileChanges: currentChanges,
@@ -305,7 +331,7 @@ export class MigrationAgent {
             currentChanges = fixResponse.fileChanges;
             aiResponse = { ...aiResponse, fileChanges: currentChanges, prDescription: fixResponse.prDescription || aiResponse.prDescription };
           } else {
-            break; // AI couldn't produce fixes, proceed with what we have
+            break;
           }
         }
       }
@@ -373,8 +399,10 @@ export class MigrationAgent {
         });
 
         await this.db.updateMigrationStatus(job.migrationId, 'completed', prUrl);
+        console.log(`[MigrationAgent] Job ${job.migrationId}: PR created at ${prUrl}`);
       } else {
         // No file changes — mark completed with note
+        console.log(`[MigrationAgent] Job ${job.migrationId}: AI returned 0 file changes, nothing to commit`);
         await this.db.updateMigrationStatus(
           job.migrationId,
           'completed',
@@ -383,6 +411,7 @@ export class MigrationAgent {
       }
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`[MigrationAgent] Job ${job.migrationId} failed: ${errorMessage}`);
       try {
         await this.db.updateMigrationStatus(
           job.migrationId,
