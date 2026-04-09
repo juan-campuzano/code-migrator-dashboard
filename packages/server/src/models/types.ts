@@ -276,7 +276,15 @@ export interface MigrationParameters {
   customInstructions?: string;
 }
 
+export interface ValidationRequest {
+  fileChanges: FileChange[];
+  errors: string;
+  repositoryContext: AIProviderRequest['repositoryContext'];
+  upgradeTargets: UpgradeTarget[];
+}
+
 export interface AIProvider {
   generateChanges(request: AIProviderRequest): Promise<AIProviderResponse>;
+  validateAndFix?(request: ValidationRequest): Promise<AIProviderResponse>;
 }
 

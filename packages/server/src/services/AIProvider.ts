@@ -4,6 +4,7 @@ import type {
   AIProviderResponse,
   FileChange,
   UpgradeTarget,
+  ValidationRequest,
 } from '../models/types';
 
 // =============================================================================
@@ -176,6 +177,43 @@ export function buildUserPromptText(request: AIProviderRequest): string {
   return lines.join('\n');
 }
 
+export function buildValidationPromptText(request: ValidationRequest): string {
+  const lines: string[] = [];
+
+  lines.push('The following file changes were generated to upgrade dependencies, but the build/lint analysis found errors.');
+  lines.push('Please fix the errors and return the corrected file changes.');
+  lines.push('');
+  lines.push('## Current File Changes');
+  lines.push('');
+
+  for (const change of request.fileChanges) {
+    lines.push(`### ${change.filePath}`);
+    lines.push('```');
+    lines.push(change.modifiedContent);
+    lines.push('```');
+    lines.push('');
+  }
+
+  lines.push('## Errors Found');
+  lines.push('');
+  lines.push('```');
+  lines.push(request.errors);
+  lines.push('```');
+  lines.push('');
+  lines.push('Please return the corrected file changes in the same JSON format:');
+  lines.push('```json');
+  lines.push('{');
+  lines.push('  "fileChanges": [');
+  lines.push('    { "filePath": "...", "originalContent": "...", "modifiedContent": "..." }');
+  lines.push('  ],');
+  lines.push('  "prDescription": "...",');
+  lines.push('  "errors": []');
+  lines.push('}');
+  lines.push('```');
+
+  return lines.join('\n');
+}
+
 // =============================================================================
 // CopilotProvider (OpenAI-compatible)
 // =============================================================================
@@ -229,6 +267,44 @@ export class CopilotProvider implements AIProvider {
   }
 
   parseResponse(content: string): AIProviderResponse {
+    return parseAIResponse(content);
+  }
+
+  async validateAndFix(request: ValidationRequest): Promise<AIProviderResponse> {
+    const systemPrompt = `You are a dependency upgrade assistant that fixes build and lint errors.
+Review the errors found after upgrading dependencies and produce corrected file changes.
+Preserve the original upgrade intent while fixing any compatibility issues, type errors, or breaking changes.`;
+
+    const userPrompt = buildValidationPromptText(request);
+
+    const response = await this.fetchFn(`${this.endpoint}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: this.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`AI provider validation error: ${response.status}`);
+    }
+
+    const data = (await response.json()) as {
+      choices: Array<{ message: { content: string } }>;
+    };
+
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error('AI provider returned empty validation response');
+    }
+
     return parseAIResponse(content);
   }
 }
@@ -398,5 +474,51 @@ export class ClaudeProvider implements AIProvider {
     }
 
     return result;
+  }
+
+  async validateAndFix(request: ValidationRequest): Promise<AIProviderResponse> {
+    const systemPrompt = `You are a dependency upgrade assistant that fixes build and lint errors.
+Review the errors found after upgrading dependencies and produce corrected file changes.
+Preserve the original upgrade intent while fixing any compatibility issues, type errors, or breaking changes.`;
+
+    const userPrompt = buildValidationPromptText(request);
+
+    const response = await this.fetchFn(`${this.endpoint}/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'x-api-key': this.apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 8192,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+      }),
+    });
+
+    if (!response.ok) {
+      let detail = '';
+      try {
+        const errBody = (await response.json()) as { error?: { message?: string; type?: string } };
+        detail = errBody?.error?.message ?? JSON.stringify(errBody);
+      } catch {
+        detail = response.statusText;
+      }
+      throw new Error(`AI provider validation error: ${response.status} — ${detail}`);
+    }
+
+    const data = (await response.json()) as {
+      content: Array<{ type: string; text: string }>;
+    };
+
+    const textBlock = data.content?.find((b) => b.type === 'text');
+    if (!textBlock?.text) {
+      throw new Error('AI provider returned empty validation response');
+    }
+
+    console.log(`[ClaudeProvider] Validation response length: ${textBlock.text.length} chars`);
+    return parseAIResponse(textBlock.text);
   }
 }

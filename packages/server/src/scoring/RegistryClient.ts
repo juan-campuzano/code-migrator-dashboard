@@ -100,6 +100,11 @@ const REGISTRY_HANDLERS: Record<
   },
 };
 
+// Ecosystem aliases — map alternative names to canonical registry handlers
+const ECOSYSTEM_ALIASES: Record<string, string> = {
+  pip: 'pypi',
+};
+
 // =============================================================================
 // RegistryClient class
 // =============================================================================
@@ -131,7 +136,8 @@ export class RegistryClient {
     }
 
     const eco = ecosystem.toLowerCase();
-    const handler = REGISTRY_HANDLERS[eco];
+    const resolvedEco = ECOSYSTEM_ALIASES[eco] ?? eco;
+    const handler = REGISTRY_HANDLERS[resolvedEco];
 
     if (!handler) {
       const result: RegistryLookupResult = {

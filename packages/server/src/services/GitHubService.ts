@@ -20,7 +20,12 @@ export class GitHubService {
       .replace(/[^a-z0-9-]/g, '-')
       .replace(/-+/g, '-')
       .replace(/^-|-$/g, '');
-    return `migration-agent/${migrationId}-${slug}`;
+    const prefix = `migration-agent/${migrationId}-`;
+    const maxSlugLength = 100 - prefix.length;
+    const trimmedSlug = maxSlugLength > 0
+      ? slug.substring(0, maxSlugLength).replace(/-$/, '')
+      : '';
+    return `${prefix}${trimmedSlug}`;
   }
 
   /** Get the default branch name for a repository. */

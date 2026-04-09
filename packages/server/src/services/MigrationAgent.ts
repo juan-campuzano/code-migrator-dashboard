@@ -5,10 +5,13 @@ import type { GitHubService } from './GitHubService';
 import type {
   AIProvider,
   AIProviderRequest,
+  AIProviderResponse,
   UpgradeTarget,
   MigrationStatus,
   MigrationParameters,
   FileEntry,
+  FileChange,
+  ValidationRequest,
 } from '../models/types';
 import { resolveAgentInstructions, buildPrDescription, buildFallbackPrDescription } from './AIProvider';
 
@@ -21,12 +24,14 @@ export interface MigrationAgentConfig {
   shutdownTimeoutMs: number;
   dashboardBaseUrl?: string;
   freshnessThreshold: number;
+  maxValidationRetries: number;
 }
 
 const DEFAULT_CONFIG: MigrationAgentConfig = {
   pollIntervalMs: 5000,
   shutdownTimeoutMs: 60000,
   freshnessThreshold: 0.8,
+  maxValidationRetries: 2,
 };
 
 // =============================================================================
@@ -78,11 +83,16 @@ export function parseMigrationAgentConfig(
     ? parseFloat(env.MIGRATION_FRESHNESS_THRESHOLD)
     : DEFAULT_CONFIG.freshnessThreshold;
 
+  const maxValidationRetries = env.MIGRATION_MAX_VALIDATION_RETRIES
+    ? parseInt(env.MIGRATION_MAX_VALIDATION_RETRIES, 10)
+    : DEFAULT_CONFIG.maxValidationRetries;
+
   return {
     pollIntervalMs: Number.isFinite(pollIntervalMs) ? pollIntervalMs : DEFAULT_CONFIG.pollIntervalMs,
     shutdownTimeoutMs: Number.isFinite(shutdownTimeoutMs) ? shutdownTimeoutMs : DEFAULT_CONFIG.shutdownTimeoutMs,
     dashboardBaseUrl: env.DASHBOARD_BASE_URL,
     freshnessThreshold: Number.isFinite(freshnessThreshold) ? freshnessThreshold : DEFAULT_CONFIG.freshnessThreshold,
+    maxValidationRetries: Number.isFinite(maxValidationRetries) ? maxValidationRetries : DEFAULT_CONFIG.maxValidationRetries,
   };
 }
 
@@ -271,9 +281,36 @@ export class MigrationAgent {
         },
       };
 
-      const aiResponse = await this.aiProvider.generateChanges(request);
+      let aiResponse = await this.aiProvider.generateChanges(request);
 
-      // 8. If file changes were produced, create branch, commit, open PR
+      // 8. Validation loop — ask AI to analyze and fix errors
+      if (aiResponse.fileChanges.length > 0 && this.aiProvider.validateAndFix) {
+        let currentChanges = aiResponse.fileChanges;
+
+        for (let attempt = 0; attempt < this.config.maxValidationRetries; attempt++) {
+          const errors = await this.analyzeChanges(currentChanges, request.repositoryContext);
+          if (!errors) break; // No errors found
+
+          console.log(`[MigrationAgent] Validation attempt ${attempt + 1}: found errors, requesting fix`);
+
+          const validationRequest: ValidationRequest = {
+            fileChanges: currentChanges,
+            errors,
+            repositoryContext: request.repositoryContext,
+            upgradeTargets,
+          };
+
+          const fixResponse = await this.aiProvider.validateAndFix(validationRequest);
+          if (fixResponse.fileChanges.length > 0) {
+            currentChanges = fixResponse.fileChanges;
+            aiResponse = { ...aiResponse, fileChanges: currentChanges, prDescription: fixResponse.prDescription || aiResponse.prDescription };
+          } else {
+            break; // AI couldn't produce fixes, proceed with what we have
+          }
+        }
+      }
+
+      // 9. If file changes were produced, create branch, commit, open PR
       if (aiResponse.fileChanges.length > 0) {
         const rawDescription = upgradeTargets.map((t) => t.dependencyName).join('-');
         // Keep branch name short — use first 3 dependency names max, cap at 80 chars
@@ -377,6 +414,57 @@ export class MigrationAgent {
       }));
 
     return filterDependenciesByThreshold(scores, this.config.freshnessThreshold);
+  }
+
+  /**
+   * Ask the AI to analyze the proposed file changes for potential build/lint errors.
+   * Returns the error description string if issues are found, or null if clean.
+   */
+  private async analyzeChanges(
+    fileChanges: FileChange[],
+    repositoryContext: AIProviderRequest['repositoryContext'],
+  ): Promise<string | null> {
+    const analysisRequest: AIProviderRequest = {
+      upgradeTargets: [],
+      agentInstructions: `You are a code reviewer. Analyze the following file changes for potential errors:
+- TypeScript/JavaScript type errors or incompatibilities
+- Breaking API changes from dependency upgrades
+- Missing imports or incorrect import paths
+- Version constraint conflicts between dependencies
+- Angular-specific issues (module changes, deprecated APIs, renamed exports)
+
+If you find errors, respond with ONLY a JSON block:
+\`\`\`json
+{ "hasErrors": true, "errors": "description of all errors found" }
+\`\`\`
+
+If the changes look correct, respond with:
+\`\`\`json
+{ "hasErrors": false, "errors": "" }
+\`\`\``,
+      repositoryContext,
+    };
+
+    try {
+      const response = await this.aiProvider.generateChanges(analysisRequest);
+      // Check if the AI found errors in its response
+      const rawDescription = response.prDescription || '';
+      const errorMatch = rawDescription.match(/"hasErrors"\s*:\s*true/);
+      if (errorMatch) {
+        const errorsMatch = rawDescription.match(/"errors"\s*:\s*"([^"]+)"/);
+        return errorsMatch?.[1] ?? 'Unknown errors detected in file changes';
+      }
+
+      // Also check if the response itself contains error indicators
+      if (response.errors.length > 0) {
+        return response.errors.map((e) => `${e.dependencyName}: ${e.error}`).join('\n');
+      }
+
+      return null;
+    } catch {
+      // If analysis fails, skip validation and proceed
+      return null;
+    }
   }
 
   private async loadAgentInstructions(
