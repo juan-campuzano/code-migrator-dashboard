@@ -260,6 +260,7 @@ export interface AIProviderRequest {
   repositoryContext: {
     fileTree: FileEntry[];
     manifestContents: Record<string, string>;
+    sourceContents: Record<string, string>;
     repoName: string;
   };
 }

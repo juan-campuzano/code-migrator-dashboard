@@ -40,12 +40,17 @@ const DEFAULT_CONFIG: MigrationAgentConfig = {
 
 const DEFAULT_AGENT_INSTRUCTIONS = `You are a dependency upgrade assistant. Follow these guidelines:
 - Make minimal, conservative changes to upgrade the specified dependencies.
-- Update version numbers in manifest files (package.json, pom.xml, build.gradle, etc.).
+- Update version numbers in ALL manifest files that contain the targeted dependencies (package.json, requirements.txt, pyproject.toml, pom.xml, build.gradle, Cargo.toml, go.mod, Gemfile, etc.).
+- IMPORTANT: This may be a monorepo with multiple projects in subfolders. You MUST update every manifest file provided in the Manifest Contents section that contains any of the targeted dependencies.
+- IMPORTANT: Review the Source Files section for any usage of deprecated or removed APIs from the upgraded dependencies. Update these files to use the new API equivalents.
+- For Angular upgrades: check for deprecated modules, renamed exports, changed method signatures, removed APIs, and updated import paths.
+- For Python upgrades: check for deprecated function calls, renamed modules, changed parameter names, and removed features.
 - Update import paths if the dependency has breaking API changes.
 - Update test dependencies alongside production dependencies.
 - Preserve existing code style and formatting conventions.
 - Do not add new dependencies unless required by the upgrade.
-- Do not remove existing functionality.`;
+- Do not remove existing functionality.
+- The filePath in your response must match the exact path shown in the Manifest Contents or Source Files sections (e.g., "angular-app/package.json", "angular-app/src/app/app.module.ts").`;
 
 // =============================================================================
 // Exported helper: filter dependencies by freshness threshold
@@ -257,6 +262,25 @@ export class MigrationAgent {
         console.log(`[MigrationAgent] Job ${job.migrationId}: no metadata dependencies found`);
       }
 
+      // 4b. Fetch source files that may need updates
+      const manifestPaths = Object.keys(manifestContents);
+      const sourceFilePaths = this.getSourceFilePaths(manifestPaths, storedFileTree);
+      const sourceContents: Record<string, string> = {};
+
+      for (const sourcePath of sourceFilePaths) {
+        try {
+          const content = await this.githubService.getFileContent({
+            owner, repo, token, path: sourcePath,
+          });
+          if (content) {
+            sourceContents[sourcePath] = content;
+          }
+        } catch {
+          // Skip files that can't be fetched
+        }
+      }
+      console.log(`[MigrationAgent] Job ${job.migrationId}: fetched ${Object.keys(sourceContents).length} source files`);
+
       // 5. Build upgrade targets
       const params = (job.parameters ?? {}) as unknown as MigrationParameters;
       let upgradeTargets: UpgradeTarget[] = [];
@@ -297,6 +321,7 @@ export class MigrationAgent {
         repositoryContext: {
           fileTree: storedFileTree.length > 0 ? storedFileTree : fileTree,
           manifestContents,
+          sourceContents,
           repoName: repository.name,
         },
       };
@@ -575,6 +600,72 @@ If the changes look correct, respond with:
       // Fallback to root-level paths if no file tree is available
       return Array.from(manifestFilenames);
     }
+
+  /**
+   * Identify source files that may need updates when dependencies change.
+   * Looks for source files in the same project directories as the manifest files,
+   * filtered to extensions relevant to each ecosystem.
+   */
+  private getSourceFilePaths(
+    manifestPaths: string[],
+    storedFileTree: FileEntry[],
+    maxFiles: number = 30,
+  ): string[] {
+    if (storedFileTree.length === 0) return [];
+
+    // Map ecosystem extensions to the directories containing their manifests
+    const ecosystemExtensions: Record<string, string[]> = {
+      'package.json': ['.ts', '.tsx', '.js', '.jsx', '.mjs'],
+      'package-lock.json': [],
+      'requirements.txt': ['.py'],
+      'pyproject.toml': ['.py'],
+      'pom.xml': ['.java', '.kt'],
+      'build.gradle': ['.java', '.kt'],
+      'build.gradle.kts': ['.java', '.kt'],
+      'Cargo.toml': ['.rs'],
+      'go.mod': ['.go'],
+      'Gemfile': ['.rb'],
+    };
+
+    // Collect project directories and their relevant extensions
+    const projectDirs: Array<{ dir: string; extensions: string[] }> = [];
+    for (const manifestPath of manifestPaths) {
+      const lastSlash = manifestPath.lastIndexOf('/');
+      const dir = lastSlash >= 0 ? manifestPath.substring(0, lastSlash) : '';
+      const basename = manifestPath.split('/').pop() ?? '';
+      const extensions = ecosystemExtensions[basename] ?? [];
+      if (extensions.length > 0) {
+        projectDirs.push({ dir, extensions });
+      }
+    }
+
+    if (projectDirs.length === 0) return [];
+
+    // Ignore common non-source directories
+    const ignoreDirs = ['node_modules', 'dist', 'build', '.git', '__pycache__', '.venv', 'venv', 'target', 'vendor'];
+
+    const sourceFiles = storedFileTree
+      .filter((entry) => entry.type === 'file')
+      .filter((entry) => {
+        // Check the file is inside one of the project directories
+        return projectDirs.some(({ dir, extensions }) => {
+          const inDir = dir === '' ? true : entry.path.startsWith(dir + '/');
+          if (!inDir) return false;
+
+          // Check extension matches
+          const ext = entry.path.substring(entry.path.lastIndexOf('.'));
+          if (!extensions.includes(ext)) return false;
+
+          // Skip ignored directories
+          const parts = entry.path.split('/');
+          return !parts.some((p) => ignoreDirs.includes(p));
+        });
+      })
+      .map((entry) => entry.path);
+
+    // Cap the number of files to avoid blowing up the prompt
+    return sourceFiles.slice(0, maxFiles);
+  }
 }
 
 // Import the static method from GitHubService

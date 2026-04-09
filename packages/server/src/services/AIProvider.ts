@@ -143,6 +143,22 @@ export function buildSystemPromptText(request: AIProviderRequest): string {
     lines.push('');
   }
 
+  const sourceContents = request.repositoryContext.sourceContents ?? {};
+  if (Object.keys(sourceContents).length > 0) {
+    lines.push('### Source Files');
+    lines.push('');
+    lines.push('These source files may use APIs from the dependencies being upgraded. Update any deprecated or breaking API usage.');
+    lines.push('');
+
+    for (const [path, content] of Object.entries(sourceContents)) {
+      lines.push(`#### ${path}`);
+      lines.push('```');
+      lines.push(content);
+      lines.push('```');
+      lines.push('');
+    }
+  }
+
   lines.push('## Response Format');
   lines.push('');
   lines.push('Respond with a JSON block containing file changes and a PR description:');
@@ -164,15 +180,29 @@ export function buildSystemPromptText(request: AIProviderRequest): string {
 export function buildUserPromptText(request: AIProviderRequest): string {
   const lines: string[] = [];
 
-  lines.push('Please upgrade the following dependencies:');
+  lines.push('Please upgrade the following dependencies in ALL relevant manifest files:');
   lines.push('');
 
+  // Group targets by ecosystem for clarity
+  const byEcosystem = new Map<string, typeof request.upgradeTargets>();
   for (const target of request.upgradeTargets) {
-    const to = target.targetVersion ?? 'latest available version';
-    lines.push(
-      `- **${target.dependencyName}** (${target.ecosystem}): ${target.currentVersion} → ${to}`,
-    );
+    const group = byEcosystem.get(target.ecosystem) ?? [];
+    group.push(target);
+    byEcosystem.set(target.ecosystem, group);
   }
+
+  for (const [ecosystem, targets] of byEcosystem) {
+    lines.push(`### ${ecosystem}`);
+    for (const target of targets) {
+      const to = target.targetVersion ?? 'latest available version';
+      lines.push(
+        `- **${target.dependencyName}**: ${target.currentVersion} → ${to}`,
+      );
+    }
+    lines.push('');
+  }
+
+  lines.push('Update every manifest file listed in the Manifest Contents section that contains any of these dependencies.');
 
   return lines.join('\n');
 }
