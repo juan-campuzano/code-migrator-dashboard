@@ -266,20 +266,24 @@ export class MigrationAgent {
       const manifestPaths = Object.keys(manifestContents);
       const sourceFilePaths = this.getSourceFilePaths(manifestPaths, storedFileTree);
       const sourceContents: Record<string, string> = {};
+      let totalSourceSize = 0;
+      const MAX_TOTAL_SOURCE_SIZE = 100_000; // 100KB total cap for source files
 
       for (const sourcePath of sourceFilePaths) {
+        if (totalSourceSize >= MAX_TOTAL_SOURCE_SIZE) break;
         try {
           const content = await this.githubService.getFileContent({
             owner, repo, token, path: sourcePath,
           });
-          if (content) {
+          if (content && content.length <= 30_000) {
             sourceContents[sourcePath] = content;
+            totalSourceSize += content.length;
           }
         } catch {
           // Skip files that can't be fetched
         }
       }
-      console.log(`[MigrationAgent] Job ${job.migrationId}: fetched ${Object.keys(sourceContents).length} source files`);
+      console.log(`[MigrationAgent] Job ${job.migrationId}: fetched ${Object.keys(sourceContents).length} source files (${Math.round(totalSourceSize / 1024)}KB)`);
 
       // 5. Build upgrade targets
       const params = (job.parameters ?? {}) as unknown as MigrationParameters;
@@ -607,65 +611,68 @@ If the changes look correct, respond with:
    * filtered to extensions relevant to each ecosystem.
    */
   private getSourceFilePaths(
-    manifestPaths: string[],
-    storedFileTree: FileEntry[],
-    maxFiles: number = 30,
-  ): string[] {
-    if (storedFileTree.length === 0) return [];
+      manifestPaths: string[],
+      storedFileTree: FileEntry[],
+      maxFiles: number = 15,
+    ): string[] {
+      if (storedFileTree.length === 0) return [];
 
-    // Map ecosystem extensions to the directories containing their manifests
-    const ecosystemExtensions: Record<string, string[]> = {
-      'package.json': ['.ts', '.tsx', '.js', '.jsx', '.mjs'],
-      'package-lock.json': [],
-      'requirements.txt': ['.py'],
-      'pyproject.toml': ['.py'],
-      'pom.xml': ['.java', '.kt'],
-      'build.gradle': ['.java', '.kt'],
-      'build.gradle.kts': ['.java', '.kt'],
-      'Cargo.toml': ['.rs'],
-      'go.mod': ['.go'],
-      'Gemfile': ['.rb'],
-    };
+      // Map ecosystem extensions to the directories containing their manifests
+      const ecosystemExtensions: Record<string, string[]> = {
+        'package.json': ['.ts', '.tsx', '.js', '.jsx', '.mjs'],
+        'package-lock.json': [],
+        'requirements.txt': ['.py'],
+        'pyproject.toml': ['.py'],
+        'pom.xml': ['.java', '.kt'],
+        'build.gradle': ['.java', '.kt'],
+        'build.gradle.kts': ['.java', '.kt'],
+        'Cargo.toml': ['.rs'],
+        'go.mod': ['.go'],
+        'Gemfile': ['.rb'],
+      };
 
-    // Collect project directories and their relevant extensions
-    const projectDirs: Array<{ dir: string; extensions: string[] }> = [];
-    for (const manifestPath of manifestPaths) {
-      const lastSlash = manifestPath.lastIndexOf('/');
-      const dir = lastSlash >= 0 ? manifestPath.substring(0, lastSlash) : '';
-      const basename = manifestPath.split('/').pop() ?? '';
-      const extensions = ecosystemExtensions[basename] ?? [];
-      if (extensions.length > 0) {
-        projectDirs.push({ dir, extensions });
+      // Collect project directories and their relevant extensions
+      const projectDirs: Array<{ dir: string; extensions: string[] }> = [];
+      for (const manifestPath of manifestPaths) {
+        const lastSlash = manifestPath.lastIndexOf('/');
+        const dir = lastSlash >= 0 ? manifestPath.substring(0, lastSlash) : '';
+        const basename = manifestPath.split('/').pop() ?? '';
+        const extensions = ecosystemExtensions[basename] ?? [];
+        if (extensions.length > 0) {
+          projectDirs.push({ dir, extensions });
+        }
       }
+
+      if (projectDirs.length === 0) return [];
+
+      // Ignore common non-source directories and test/spec files
+      const ignoreDirs = ['node_modules', 'dist', 'build', '.git', '__pycache__', '.venv', 'venv', 'target', 'vendor', 'coverage', '.angular'];
+      const ignorePatterns = ['.spec.', '.test.', '.e2e.', '__test__'];
+
+      const sourceFiles = storedFileTree
+        .filter((entry) => entry.type === 'file')
+        .filter((entry) => {
+          // Skip large files (> 50KB)
+          if (entry.size && entry.size > 50_000) return false;
+
+          // Skip test files
+          if (ignorePatterns.some((p) => entry.path.includes(p))) return false;
+
+          return projectDirs.some(({ dir, extensions }) => {
+            const inDir = dir === '' ? true : entry.path.startsWith(dir + '/');
+            if (!inDir) return false;
+
+            const ext = entry.path.substring(entry.path.lastIndexOf('.'));
+            if (!extensions.includes(ext)) return false;
+
+            const parts = entry.path.split('/');
+            return !parts.some((p) => ignoreDirs.includes(p));
+          });
+        })
+        .map((entry) => entry.path);
+
+      return sourceFiles.slice(0, maxFiles);
     }
-
-    if (projectDirs.length === 0) return [];
-
-    // Ignore common non-source directories
-    const ignoreDirs = ['node_modules', 'dist', 'build', '.git', '__pycache__', '.venv', 'venv', 'target', 'vendor'];
-
-    const sourceFiles = storedFileTree
-      .filter((entry) => entry.type === 'file')
-      .filter((entry) => {
-        // Check the file is inside one of the project directories
-        return projectDirs.some(({ dir, extensions }) => {
-          const inDir = dir === '' ? true : entry.path.startsWith(dir + '/');
-          if (!inDir) return false;
-
-          // Check extension matches
-          const ext = entry.path.substring(entry.path.lastIndexOf('.'));
-          if (!extensions.includes(ext)) return false;
-
-          // Skip ignored directories
-          const parts = entry.path.split('/');
-          return !parts.some((p) => ignoreDirs.includes(p));
-        });
-      })
-      .map((entry) => entry.path);
-
-    // Cap the number of files to avoid blowing up the prompt
-    return sourceFiles.slice(0, maxFiles);
-  }
 }
 
 // Import the static method from GitHubService

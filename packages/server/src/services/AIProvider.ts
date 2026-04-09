@@ -468,7 +468,7 @@ export class ClaudeProvider implements AIProvider {
       },
       body: JSON.stringify({
         model: this.model,
-        max_tokens: 8192,
+        max_tokens: 16384,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
       }),
@@ -487,6 +487,7 @@ export class ClaudeProvider implements AIProvider {
 
     const data = (await response.json()) as {
       content: Array<{ type: string; text: string }>;
+      stop_reason?: string;
     };
 
     const textBlock = data.content?.find((b) => b.type === 'text');
@@ -494,8 +495,12 @@ export class ClaudeProvider implements AIProvider {
       throw new Error('AI provider returned empty response');
     }
 
-    console.log(`[ClaudeProvider] Response length: ${textBlock.text.length} chars`);
+    console.log(`[ClaudeProvider] Response length: ${textBlock.text.length} chars, stop_reason: ${data.stop_reason}`);
     console.log(`[ClaudeProvider] Response preview: ${textBlock.text.substring(0, 500)}`);
+
+    if (data.stop_reason === 'max_tokens') {
+      console.warn(`[ClaudeProvider] Response was truncated (hit max_tokens). Output may be incomplete.`);
+    }
 
     const result = parseAIResponse(textBlock.text);
     console.log(`[ClaudeProvider] Parsed: ${result.fileChanges.length} file changes, ${result.errors.length} errors`);
@@ -522,7 +527,7 @@ Preserve the original upgrade intent while fixing any compatibility issues, type
       },
       body: JSON.stringify({
         model: this.model,
-        max_tokens: 8192,
+        max_tokens: 16384,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
       }),
@@ -541,11 +546,16 @@ Preserve the original upgrade intent while fixing any compatibility issues, type
 
     const data = (await response.json()) as {
       content: Array<{ type: string; text: string }>;
+      stop_reason?: string;
     };
 
     const textBlock = data.content?.find((b) => b.type === 'text');
     if (!textBlock?.text) {
       throw new Error('AI provider returned empty validation response');
+    }
+
+    if (data.stop_reason === 'max_tokens') {
+      console.warn(`[ClaudeProvider] Validation response was truncated (hit max_tokens).`);
     }
 
     console.log(`[ClaudeProvider] Validation response length: ${textBlock.text.length} chars`);
