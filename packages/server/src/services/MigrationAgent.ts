@@ -142,6 +142,7 @@ export class MigrationAgent {
     if (this.running) return;
     this.running = true;
     this.shuttingDown = false;
+    console.log(`[MigrationAgent] Started — polling every ${this.config.pollIntervalMs}ms`);
     this.scheduleTick();
   }
 
@@ -178,6 +179,7 @@ export class MigrationAgent {
 
   private async tick(): Promise<void> {
     if (this.shuttingDown) return;
+    console.log(`[MigrationAgent] Tick — polling for jobs...`);
 
     try {
       const job = await this.db.claimNextJob();
@@ -189,8 +191,9 @@ export class MigrationAgent {
       this.inFlightPromise = this.processJob(job);
       await this.inFlightPromise;
       this.inFlightPromise = null;
-    } catch {
-      // Database error during claim — log and continue
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`[MigrationAgent] Tick error: ${msg}`);
       this.inFlightPromise = null;
     }
 
