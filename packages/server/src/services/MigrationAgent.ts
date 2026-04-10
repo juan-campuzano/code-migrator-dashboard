@@ -42,8 +42,8 @@ const DEFAULT_AGENT_INSTRUCTIONS = `You are a dependency upgrade assistant. Foll
 - Make minimal, conservative changes to upgrade the specified dependencies.
 - Update version numbers in ALL manifest files that contain the targeted dependencies (package.json, requirements.txt, pyproject.toml, pom.xml, build.gradle, Cargo.toml, go.mod, Gemfile, etc.).
 - IMPORTANT: This may be a monorepo with multiple projects in subfolders. You MUST update every manifest file provided in the Manifest Contents section that contains any of the targeted dependencies.
-- IMPORTANT: Review the Source Files section for any usage of deprecated or removed APIs from the upgraded dependencies. Update these files to use the new API equivalents.
-- For Angular upgrades: check for deprecated modules, renamed exports, changed method signatures, removed APIs, and updated import paths.
+- IMPORTANT: Review the Source Files section for any usage of deprecated or removed APIs from the upgraded dependencies. If a source file needs changes, include it in your fileChanges response with the corrected content.
+- For Angular upgrades: check for deprecated modules, renamed exports, changed method signatures, removed APIs, and updated import paths. Common changes include HttpModule→HttpClientModule, Renderer→Renderer2, and standalone component migrations.
 - For Python upgrades: check for deprecated function calls, renamed modules, changed parameter names, and removed features.
 - Update import paths if the dependency has breaking API changes.
 - Update test dependencies alongside production dependencies.
@@ -51,7 +51,8 @@ const DEFAULT_AGENT_INSTRUCTIONS = `You are a dependency upgrade assistant. Foll
 - Do not add new dependencies unless required by the upgrade.
 - Do not remove existing functionality.
 - NEVER modify or generate lock files (package-lock.json, yarn.lock, Pipfile.lock, Cargo.lock, poetry.lock, Gemfile.lock). These are auto-generated and must not be included in your response.
-- The filePath in your response must match the exact path shown in the Manifest Contents or Source Files sections (e.g., "angular-app/package.json", "angular-app/src/app/app.module.ts").`;
+- The filePath in your response must match the exact path shown in the Manifest Contents or Source Files sections.
+- If you encounter errors or breaking changes you cannot resolve, list them in the "errors" array of your response.`;
 
 // =============================================================================
 // Exported helper: filter dependencies by freshness threshold
@@ -339,35 +340,32 @@ export class MigrationAgent {
         console.log(`[MigrationAgent] Job ${job.migrationId}: AI errors: ${JSON.stringify(aiResponse.errors)}`);
       }
 
-      // 8. Validation loop — ask AI to analyze and fix errors
-      if (aiResponse.fileChanges.length > 0 && this.aiProvider.validateAndFix) {
-        let currentChanges = aiResponse.fileChanges;
+      // 8. Validation — if AI reported errors, ask it to fix them
+      if (aiResponse.fileChanges.length > 0 && aiResponse.errors.length > 0 && this.aiProvider.validateAndFix) {
+        const errorText = aiResponse.errors.map((e) => `${e.dependencyName}: ${e.error}`).join('\n');
+        console.log(`[MigrationAgent] Job ${job.migrationId}: AI reported ${aiResponse.errors.length} errors, attempting fix`);
 
-        for (let attempt = 0; attempt < this.config.maxValidationRetries; attempt++) {
-          const errors = await this.analyzeChanges(currentChanges, request.repositoryContext);
-          if (!errors) break;
+        const validationRequest: ValidationRequest = {
+          fileChanges: aiResponse.fileChanges,
+          errors: errorText,
+          repositoryContext: request.repositoryContext,
+          upgradeTargets,
+        };
 
-          console.log(`[MigrationAgent] Job ${job.migrationId}: validation attempt ${attempt + 1} found errors, requesting fix`);
-
-          const validationRequest: ValidationRequest = {
-            fileChanges: currentChanges,
-            errors,
-            repositoryContext: request.repositoryContext,
-            upgradeTargets,
-          };
-
+        try {
           const fixResponse = await this.aiProvider.validateAndFix(validationRequest);
           if (fixResponse.fileChanges.length > 0) {
-            // Merge: use fix response for files it touched, keep originals for the rest
             const fixedPaths = new Set(fixResponse.fileChanges.map((f) => f.filePath));
-            const kept = currentChanges.filter((c) => !fixedPaths.has(c.filePath));
-            currentChanges = [...kept, ...fixResponse.fileChanges];
-            console.log(`[MigrationAgent] Job ${job.migrationId}: fix produced ${fixResponse.fileChanges.length} changes, total now ${currentChanges.length}`);
-            aiResponse = { ...aiResponse, fileChanges: currentChanges, prDescription: fixResponse.prDescription || aiResponse.prDescription };
+            const kept = aiResponse.fileChanges.filter((c) => !fixedPaths.has(c.filePath));
+            const merged = [...kept, ...fixResponse.fileChanges];
+            console.log(`[MigrationAgent] Job ${job.migrationId}: fix produced ${fixResponse.fileChanges.length} changes, total now ${merged.length}`);
+            aiResponse = { ...aiResponse, fileChanges: merged, prDescription: fixResponse.prDescription || aiResponse.prDescription };
           } else {
-            console.log(`[MigrationAgent] Job ${job.migrationId}: fix returned 0 changes, keeping current`);
-            break;
+            console.log(`[MigrationAgent] Job ${job.migrationId}: fix returned 0 changes, keeping original`);
           }
+        } catch (fixError) {
+          const msg = fixError instanceof Error ? fixError.message : String(fixError);
+          console.log(`[MigrationAgent] Job ${job.migrationId}: validation fix failed (proceeding with original): ${msg}`);
         }
       }
 
@@ -479,79 +477,6 @@ export class MigrationAgent {
 
     return filterDependenciesByThreshold(scores, this.config.freshnessThreshold);
   }
-
-  /**
-   * Ask the AI to analyze the proposed file changes for potential build/lint errors.
-   * Returns the error description string if issues are found, or null if clean.
-   */
-  private async analyzeChanges(
-      fileChanges: FileChange[],
-      repositoryContext: AIProviderRequest['repositoryContext'],
-    ): Promise<string | null> {
-      // Build a prompt that includes the actual file changes
-      const changesDescription = fileChanges.map((c) => {
-        return `### ${c.filePath}\n\`\`\`\n${c.modifiedContent.substring(0, 5000)}\n\`\`\``;
-      }).join('\n\n');
-
-      const analysisRequest: AIProviderRequest = {
-        upgradeTargets: [],
-        agentInstructions: `You are a code reviewer. Analyze the file changes below together with the source files in the repository context for potential errors caused by the dependency upgrades:
-  - TypeScript/JavaScript type errors or incompatibilities
-  - Breaking API changes from dependency upgrades (deprecated modules, renamed exports, changed method signatures)
-  - Missing imports or incorrect import paths
-  - Version constraint conflicts between dependencies
-  - Angular-specific issues (standalone components, removed NgModules, changed providers)
-  - Python-specific issues (renamed functions, removed parameters, changed return types)
-
-  ## File Changes To Review
-
-  ${changesDescription}
-
-  ## Instructions
-
-  If you find errors in the source files that need fixing due to the upgrades, respond with ONLY a plain text description of all errors found. Do NOT wrap in JSON. Do NOT use code blocks. Just describe each error on its own line.
-
-  If the changes look correct and no source files need updating, respond with exactly: NO_ERRORS`,
-        repositoryContext,
-      };
-
-      try {
-        console.log(`[MigrationAgent] Analyzing changes for errors...`);
-        const response = await this.aiProvider.generateChanges(analysisRequest);
-
-        // The response will come back through parseAIResponse which may put text in prDescription
-        // or in errors array. Check all possible locations for the analysis result.
-        const responseText = response.prDescription || '';
-
-        if (responseText.includes('NO_ERRORS')) {
-          console.log(`[MigrationAgent] Analysis: no errors found`);
-          return null;
-        }
-
-        // If we got actual error descriptions
-        if (responseText.length > 10) {
-          console.log(`[MigrationAgent] Analysis found errors: ${responseText.substring(0, 300)}`);
-          return responseText;
-        }
-
-        // Check the errors array from parseAIResponse
-        if (response.errors.length > 0) {
-          const errText = response.errors.map((e) => `${e.dependencyName}: ${e.error}`).join('\n');
-          // Filter out parse errors — those are about JSON parsing, not code errors
-          if (!errText.includes('Failed to parse AI response')) {
-            console.log(`[MigrationAgent] Analysis found errors via errors array: ${errText.substring(0, 300)}`);
-            return errText;
-          }
-        }
-
-        console.log(`[MigrationAgent] Analysis: no actionable errors found`);
-        return null;
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        console.log(`[MigrationAgent] Analysis failed (skipping): ${msg}`);
-        return null;
-      }
-    }
 
   private async loadAgentInstructions(
     owner: string,
