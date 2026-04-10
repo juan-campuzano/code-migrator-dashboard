@@ -358,9 +358,14 @@ export class MigrationAgent {
 
           const fixResponse = await this.aiProvider.validateAndFix(validationRequest);
           if (fixResponse.fileChanges.length > 0) {
-            currentChanges = fixResponse.fileChanges;
+            // Merge: use fix response for files it touched, keep originals for the rest
+            const fixedPaths = new Set(fixResponse.fileChanges.map((f) => f.filePath));
+            const kept = currentChanges.filter((c) => !fixedPaths.has(c.filePath));
+            currentChanges = [...kept, ...fixResponse.fileChanges];
+            console.log(`[MigrationAgent] Job ${job.migrationId}: fix produced ${fixResponse.fileChanges.length} changes, total now ${currentChanges.length}`);
             aiResponse = { ...aiResponse, fileChanges: currentChanges, prDescription: fixResponse.prDescription || aiResponse.prDescription };
           } else {
+            console.log(`[MigrationAgent] Job ${job.migrationId}: fix returned 0 changes, keeping current`);
             break;
           }
         }
@@ -480,51 +485,73 @@ export class MigrationAgent {
    * Returns the error description string if issues are found, or null if clean.
    */
   private async analyzeChanges(
-    fileChanges: FileChange[],
-    repositoryContext: AIProviderRequest['repositoryContext'],
-  ): Promise<string | null> {
-    const analysisRequest: AIProviderRequest = {
-      upgradeTargets: [],
-      agentInstructions: `You are a code reviewer. Analyze the following file changes for potential errors:
-- TypeScript/JavaScript type errors or incompatibilities
-- Breaking API changes from dependency upgrades
-- Missing imports or incorrect import paths
-- Version constraint conflicts between dependencies
-- Angular-specific issues (module changes, deprecated APIs, renamed exports)
+      fileChanges: FileChange[],
+      repositoryContext: AIProviderRequest['repositoryContext'],
+    ): Promise<string | null> {
+      // Build a prompt that includes the actual file changes
+      const changesDescription = fileChanges.map((c) => {
+        return `### ${c.filePath}\n\`\`\`\n${c.modifiedContent.substring(0, 5000)}\n\`\`\``;
+      }).join('\n\n');
 
-If you find errors, respond with ONLY a JSON block:
-\`\`\`json
-{ "hasErrors": true, "errors": "description of all errors found" }
-\`\`\`
+      const analysisRequest: AIProviderRequest = {
+        upgradeTargets: [],
+        agentInstructions: `You are a code reviewer. Analyze the file changes below together with the source files in the repository context for potential errors caused by the dependency upgrades:
+  - TypeScript/JavaScript type errors or incompatibilities
+  - Breaking API changes from dependency upgrades (deprecated modules, renamed exports, changed method signatures)
+  - Missing imports or incorrect import paths
+  - Version constraint conflicts between dependencies
+  - Angular-specific issues (standalone components, removed NgModules, changed providers)
+  - Python-specific issues (renamed functions, removed parameters, changed return types)
 
-If the changes look correct, respond with:
-\`\`\`json
-{ "hasErrors": false, "errors": "" }
-\`\`\``,
-      repositoryContext,
-    };
+  ## File Changes To Review
 
-    try {
-      const response = await this.aiProvider.generateChanges(analysisRequest);
-      // Check if the AI found errors in its response
-      const rawDescription = response.prDescription || '';
-      const errorMatch = rawDescription.match(/"hasErrors"\s*:\s*true/);
-      if (errorMatch) {
-        const errorsMatch = rawDescription.match(/"errors"\s*:\s*"([^"]+)"/);
-        return errorsMatch?.[1] ?? 'Unknown errors detected in file changes';
+  ${changesDescription}
+
+  ## Instructions
+
+  If you find errors in the source files that need fixing due to the upgrades, respond with ONLY a plain text description of all errors found. Do NOT wrap in JSON. Do NOT use code blocks. Just describe each error on its own line.
+
+  If the changes look correct and no source files need updating, respond with exactly: NO_ERRORS`,
+        repositoryContext,
+      };
+
+      try {
+        console.log(`[MigrationAgent] Analyzing changes for errors...`);
+        const response = await this.aiProvider.generateChanges(analysisRequest);
+
+        // The response will come back through parseAIResponse which may put text in prDescription
+        // or in errors array. Check all possible locations for the analysis result.
+        const responseText = response.prDescription || '';
+
+        if (responseText.includes('NO_ERRORS')) {
+          console.log(`[MigrationAgent] Analysis: no errors found`);
+          return null;
+        }
+
+        // If we got actual error descriptions
+        if (responseText.length > 10) {
+          console.log(`[MigrationAgent] Analysis found errors: ${responseText.substring(0, 300)}`);
+          return responseText;
+        }
+
+        // Check the errors array from parseAIResponse
+        if (response.errors.length > 0) {
+          const errText = response.errors.map((e) => `${e.dependencyName}: ${e.error}`).join('\n');
+          // Filter out parse errors — those are about JSON parsing, not code errors
+          if (!errText.includes('Failed to parse AI response')) {
+            console.log(`[MigrationAgent] Analysis found errors via errors array: ${errText.substring(0, 300)}`);
+            return errText;
+          }
+        }
+
+        console.log(`[MigrationAgent] Analysis: no actionable errors found`);
+        return null;
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.log(`[MigrationAgent] Analysis failed (skipping): ${msg}`);
+        return null;
       }
-
-      // Also check if the response itself contains error indicators
-      if (response.errors.length > 0) {
-        return response.errors.map((e) => `${e.dependencyName}: ${e.error}`).join('\n');
-      }
-
-      return null;
-    } catch {
-      // If analysis fails, skip validation and proceed
-      return null;
     }
-  }
 
   private async loadAgentInstructions(
     owner: string,
