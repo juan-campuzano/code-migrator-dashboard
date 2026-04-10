@@ -50,6 +50,7 @@ const DEFAULT_AGENT_INSTRUCTIONS = `You are a dependency upgrade assistant. Foll
 - Preserve existing code style and formatting conventions.
 - Do not add new dependencies unless required by the upgrade.
 - Do not remove existing functionality.
+- NEVER modify or generate lock files (package-lock.json, yarn.lock, Pipfile.lock, Cargo.lock, poetry.lock, Gemfile.lock). These are auto-generated and must not be included in your response.
 - The filePath in your response must match the exact path shown in the Manifest Contents or Source Files sections (e.g., "angular-app/package.json", "angular-app/src/app/app.module.ts").`;
 
 // =============================================================================
@@ -577,7 +578,7 @@ If the changes look correct, respond with:
       const ecosystems = new Set(dependencies.map((d) => d.ecosystem));
       const manifestFilenames = new Set<string>();
 
-      if (ecosystems.has('npm'))    { manifestFilenames.add('package.json'); manifestFilenames.add('package-lock.json'); }
+      if (ecosystems.has('npm'))    { manifestFilenames.add('package.json'); }
       if (ecosystems.has('pip'))    { manifestFilenames.add('requirements.txt'); manifestFilenames.add('pyproject.toml'); }
       if (ecosystems.has('maven'))  { manifestFilenames.add('pom.xml'); }
       if (ecosystems.has('gradle')) { manifestFilenames.add('build.gradle'); manifestFilenames.add('build.gradle.kts'); }
