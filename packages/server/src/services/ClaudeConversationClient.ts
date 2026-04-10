@@ -45,7 +45,7 @@ interface ClaudeToolDefinition {
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
-const DEFAULT_MAX_TOKENS = 8192;
+const DEFAULT_MAX_TOKENS = 16384;
 
 /**
  * Handles the Claude API conversation loop with MCP tool execution.

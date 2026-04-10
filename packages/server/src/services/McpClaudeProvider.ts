@@ -4,10 +4,12 @@ import type {
   AIProvider,
   AIProviderRequest,
   AIProviderResponse,
+  ValidationRequest,
 } from '../models/types';
 import {
   buildSystemPromptText,
   buildUserPromptText,
+  buildValidationPromptText,
   parseAIResponse,
 } from './AIProvider';
 
@@ -66,11 +68,34 @@ Do NOT include any text outside the JSON block. The originalContent must match t
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[McpClaudeProvider] Error during generateChanges:`, message);
-      return {
-        fileChanges: [],
-        prDescription: '',
-        errors: [{ dependencyName: 'unknown', error: message }],
-      };
+      throw error;
     }
+  }
+
+  async validateAndFix(request: ValidationRequest): Promise<AIProviderResponse> {
+    const userPrompt = buildValidationPromptText(request);
+
+    const jsonReminder = `
+
+IMPORTANT: You MUST respond with ONLY a JSON block in this exact format:
+\`\`\`json
+{
+  "fileChanges": [
+    { "filePath": "path/to/file", "originalContent": "...", "modifiedContent": "..." }
+  ],
+  "prDescription": "markdown description of changes",
+  "errors": []
+}
+\`\`\`
+Do NOT include any text outside the JSON block.`;
+
+    const fullMessage = `${userPrompt}${jsonReminder}`;
+
+    console.log(`[McpClaudeProvider] validateAndFix prompt length: ${fullMessage.length} chars`);
+
+    const responseText = await this.conversationClient.executePrompt(fullMessage);
+    console.log(`[McpClaudeProvider] Validation response length: ${responseText.length} chars`);
+
+    return parseAIResponse(responseText);
   }
 }
